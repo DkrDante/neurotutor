@@ -54,6 +54,28 @@ adaptive difficulty update after each attempt.
 pytest
 ```
 
+## Known limitation: headline accuracy does not prove the fusion works
+
+The synthetic data generator gives each of the 5 cognitive states both a
+distinct behavior profile (`data_gen/virtual_player.py`) *and* a distinct
+EEG band profile (`eeg/simulated.py`). The classes are therefore separable
+from the behavior features alone, so the trained model's high test accuracy
+does **not** by itself demonstrate that the EEG/GCN branch contributes
+anything to the prediction — a behavior-only model would likely score
+similarly on this dataset.
+
+This is a property of the synthetic data, not of the architecture, and it
+is not something the current metrics can distinguish. Anyone extending this
+work should run **ablations** before drawing conclusions about the fusion:
+
+- train and evaluate with the EEG branch zeroed/removed (behavior-only),
+- train and evaluate with the behavior branch zeroed/removed (EEG-only),
+- compare both against the full fusion model on the same splits.
+
+Only a fusion model that clearly beats both single-modality baselines
+demonstrates that combining the streams is doing real work. No ablation
+harness ships with this build.
+
 ## Scope of this build
 
 This is the first sub-project of the larger NeuroTutor capstone (see the
