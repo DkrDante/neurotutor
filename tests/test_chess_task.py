@@ -36,3 +36,29 @@ def test_submit_move_incorrect_uses_evaluator():
     event = engine.submit_move(puzzle, "h1g1", time_to_move=3.0)
     assert event.correct is False
     assert event.eval_loss == 250.0
+
+class ExplodingEvaluator(MoveEvaluator):
+    def eval_loss(self, board, played_move, best_move) -> float:
+        raise AssertionError("evaluator must never be called with an illegal move")
+
+@pytest.mark.parametrize("bad_move", ["not-a-move", "", "z9z9", "a1a1a1a1", "a1"])
+def test_submit_move_invalid_uci_is_incorrect_and_does_not_raise(bad_move):
+    engine = PuzzleTaskEngine(evaluator=ExplodingEvaluator())
+    puzzle = Puzzle(puzzle_id="rb01", fen="2k5/1ppp4/8/8/8/8/8/R6K w - - 0 1", solution_move="a1a8", rating=700)
+    event = engine.submit_move(puzzle, bad_move, time_to_move=3.0)
+    assert event.correct is False
+    assert event.eval_loss == PuzzleTaskEngine.ILLEGAL_MOVE_PENALTY
+
+@pytest.mark.parametrize("illegal_move", ["a1a1", "h1a8", "e7e5"])
+def test_submit_move_legal_uci_but_illegal_move_is_incorrect(illegal_move):
+    """Syntactically valid UCI that is not legal in this position (a1a1 is the
+    'clicked the same square twice' case). Must not reach the evaluator, whose
+    _score() would assert inside board.push()."""
+    engine = PuzzleTaskEngine(evaluator=ExplodingEvaluator())
+    puzzle = Puzzle(puzzle_id="rb01", fen="2k5/1ppp4/8/8/8/8/8/R6K w - - 0 1", solution_move="a1a8", rating=700)
+    event = engine.submit_move(puzzle, illegal_move, time_to_move=3.0)
+    assert event.correct is False
+    assert event.eval_loss == PuzzleTaskEngine.ILLEGAL_MOVE_PENALTY
+
+def test_null_evaluator_close_is_a_noop():
+    FakeEvaluator().close()  # MoveEvaluator provides a default no-op close()

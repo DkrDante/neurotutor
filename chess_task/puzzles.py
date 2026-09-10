@@ -8,6 +8,10 @@ from chess_task.evaluator import MoveEvaluator
 DEFAULT_PUZZLE_CSV = Path(__file__).parent / "puzzle_data" / "sample_puzzles.csv"
 
 class PuzzleTaskEngine(TaskEngine):
+    # Eval loss charged for an unparseable or illegal move. Deliberately larger than a
+    # realistic Stockfish centipawn loss so it reads as "worst possible attempt".
+    ILLEGAL_MOVE_PENALTY = 500.0
+
     def __init__(self, evaluator: MoveEvaluator, puzzle_csv: Path = DEFAULT_PUZZLE_CSV):
         self.evaluator = evaluator
         self.puzzles = self._load_puzzles(puzzle_csv)
@@ -38,10 +42,23 @@ class PuzzleTaskEngine(TaskEngine):
 
     def submit_move(self, puzzle: Puzzle, move_uci: str, time_to_move: float) -> BehaviorEvent:
         board = chess.Board(puzzle.fen)
-        played_move = chess.Move.from_uci(move_uci)
+        try:
+            played_move = chess.Move.from_uci(move_uci)
+            is_legal = played_move in board.legal_moves
+        except (ValueError, TypeError):
+            played_move = None
+            is_legal = False
+
         best_move = chess.Move.from_uci(puzzle.solution_move)
-        correct = played_move == best_move
-        eval_loss = 0.0 if correct else self.evaluator.eval_loss(board, played_move, best_move)
+        correct = is_legal and played_move == best_move
+        if not is_legal:
+            # The evaluator's _score() pushes the move onto the board, which asserts on
+            # illegal moves — so never hand it one; charge a flat penalty instead.
+            eval_loss = self.ILLEGAL_MOVE_PENALTY
+        elif correct:
+            eval_loss = 0.0
+        else:
+            eval_loss = self.evaluator.eval_loss(board, played_move, best_move)
         return BehaviorEvent(
             puzzle_id=puzzle.puzzle_id,
             correct=correct,
