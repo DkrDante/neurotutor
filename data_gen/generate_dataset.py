@@ -5,6 +5,7 @@ import numpy as np
 from common.config import NUM_CHANNELS, SAMPLE_RATE, EPOCH_SAMPLES, SEQ_LEN, NUM_BEHAVIOR_FEATS
 from common.states import STATES
 from eeg.simulated import SimulatedEEGSource
+from preprocessing.filters import bandpass_filter
 from preprocessing.features import extract_node_features
 from data_gen.virtual_player import VirtualPlayer
 
@@ -32,7 +33,10 @@ def generate_examples(num_examples_per_state: int, seed: int = 0):
             seq_eeg, seq_behavior = [], []
             for step in range(SEQ_LEN):
                 chunk = eeg_src.generate_chunk()
-                node_features = extract_node_features(chunk.samples, SAMPLE_RATE)
+                # Must stay in lockstep with web.session.TutorSession.submit_move, which
+                # applies the same bandpass before feature extraction at serving time.
+                filtered = bandpass_filter(chunk.samples, SAMPLE_RATE)
+                node_features = extract_node_features(filtered, SAMPLE_RATE)
                 rating = int(rating_rng.integers(800, 1400))
                 event = player.attempt(puzzle_id=f"synthetic-{step}", puzzle_rating=rating)
                 seq_eeg.append(node_features)

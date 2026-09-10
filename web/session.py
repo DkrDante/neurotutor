@@ -5,6 +5,7 @@ import numpy as np
 from chess_task.base import TaskEngine, Puzzle
 from eeg.source import EEGSource
 from preprocessing.epoching import EpochBuffer
+from preprocessing.filters import bandpass_filter
 from preprocessing.features import extract_node_features
 from model.inference import StatePredictor
 from adaptive.policy import Policy, Action
@@ -51,11 +52,18 @@ class TutorSession:
         # write below are deliberately excluded — neither is part of "sense -> adapt".
         start_time = time.monotonic()
         epoch = self.epoch_buffer.extract_epoch()
-        node_features = extract_node_features(epoch.samples, self.eeg_source.sample_rate)
+        # Same bandpass applied in data_gen.generate_dataset, so serving-time features
+        # match the distribution the model was trained on.
+        filtered = bandpass_filter(epoch.samples, self.eeg_source.sample_rate)
+        node_features = extract_node_features(filtered, self.eeg_source.sample_rate)
         behavior_vector = behavior_to_vector(behavior_event)
 
-        self._eeg_history = (self._eeg_history + [node_features])[-SEQ_LEN:]
-        self._behavior_history = (self._behavior_history + [behavior_vector])[-SEQ_LEN:]
+        if not epoch.is_artifact:
+            self._eeg_history = (self._eeg_history + [node_features])[-SEQ_LEN:]
+            self._behavior_history = (self._behavior_history + [behavior_vector])[-SEQ_LEN:]
+        # On an artifact-flagged epoch we leave the rolling window untouched: a corrupted
+        # epoch would otherwise pollute the model's input for the next SEQ_LEN attempts.
+        # The attempt itself still runs (predicted on the previous history) and is logged.
 
         eeg_seq = self._padded_sequence(self._eeg_history, node_features.shape)
         behavior_seq = self._padded_sequence(self._behavior_history, behavior_vector.shape)
