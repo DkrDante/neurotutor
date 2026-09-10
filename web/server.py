@@ -35,6 +35,10 @@ _store = SessionStore("neurotutor.db")
 def index():
     return FileResponse(STATIC_DIR / "index.html")
 
+@app.get("/session/{session_id}/summary")
+def session_summary(session_id: str):
+    return _store.get_session_summary(session_id)
+
 @app.websocket("/ws/session")
 async def session_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -67,6 +71,7 @@ async def session_endpoint(websocket: WebSocket):
                 "type": "puzzle",
                 "puzzle_id": puzzle.puzzle_id,
                 "fen": puzzle.fen,
+                "session_id": session.session_id,
             })
 
             while True:
@@ -96,6 +101,7 @@ async def session_endpoint(websocket: WebSocket):
                     "pacing_delay": update.action.pacing_delay,
                 },
                 "difficulty": session.difficulty,
+                "session_id": session.session_id,
             })
             await asyncio.sleep(update.action.pacing_delay)
     except WebSocketDisconnect:

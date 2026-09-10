@@ -28,6 +28,7 @@ function squareName(rankIdx, fileIdx) {
 let selectedSquare = null;
 let attemptStartMs = null;
 let ws = null;
+let sessionId = null;
 let lastServerError = null;
 
 function clearSelection() {
@@ -72,10 +73,29 @@ function onSquareClick(square, el) {
   clearSelection();
 }
 
+async function showSummary() {
+  const summaryEl = document.getElementById("summary");
+  if (!sessionId) {
+    summaryEl.textContent = "No session yet.";
+    return;
+  }
+  try {
+    const response = await fetch(`/session/${sessionId}/summary`);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const s = await response.json();
+    summaryEl.textContent =
+      `Attempts: ${s.num_attempts} | Accuracy: ${(s.accuracy_rate * 100).toFixed(0)}% | ` +
+      `Avg latency: ${s.avg_latency.toFixed(3)}s | States: ${s.state_trend.join(", ") || "-"}`;
+  } catch (err) {
+    summaryEl.textContent = `Could not load summary: ${err.message}`;
+  }
+}
+
 function connect() {
   ws = new WebSocket(`ws://${window.location.host}/ws/session`);
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
+    if (msg.session_id) sessionId = msg.session_id;
     if (msg.type === "puzzle") {
       renderBoard(msg.fen);
       document.getElementById("feedback").textContent = "";
@@ -101,4 +121,5 @@ function connect() {
   };
 }
 
+document.getElementById("summary-button").addEventListener("click", showSummary);
 connect();

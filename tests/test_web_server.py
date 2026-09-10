@@ -29,6 +29,8 @@ def test_websocket_session_round_trip(tmp_path, monkeypatch):
         assert puzzle_msg["type"] == "puzzle"
         assert "fen" in puzzle_msg
 
+        assert "session_id" in puzzle_msg
+
         ws.send_json({"move_uci": "a1a8", "time_to_move": 5.0})
         update_msg = ws.receive_json()
         assert update_msg["type"] == "update"
@@ -110,3 +112,28 @@ def test_missing_checkpoint_reports_error_instead_of_hanging(tmp_path, monkeypat
         msg = ws.receive_json()
         assert msg["type"] == "error"
         assert "checkpoint not found" in msg["message"].lower()
+
+def test_session_summary_endpoint_returns_expected_keys(tmp_path, monkeypatch):
+    store = _install_test_server(tmp_path, monkeypatch)
+    client = TestClient(server_module.app)
+
+    session_id = store.create_session()
+    store.log_attempt(
+        session_id=session_id, puzzle_id="rb01", correct=True, time_to_move=4.0,
+        eval_loss=0.0, puzzle_rating=700, predicted_state="Focused", confidence=0.8,
+        difficulty_delta=100.0, show_hint=False, pacing_delay=0.0, sense_to_adapt_latency=0.02,
+    )
+
+    response = client.get(f"/session/{session_id}/summary")
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"num_attempts", "accuracy_rate", "avg_latency", "state_trend"}
+    assert body["num_attempts"] == 1
+    assert body["accuracy_rate"] == 1.0
+    assert body["state_trend"] == ["Focused"]
+
+def test_session_summary_endpoint_for_unknown_session(tmp_path, monkeypatch):
+    _install_test_server(tmp_path, monkeypatch)
+    client = TestClient(server_module.app)
+    body = client.get("/session/does-not-exist/summary").json()
+    assert body == {"num_attempts": 0, "accuracy_rate": 0.0, "avg_latency": 0.0, "state_trend": []}
