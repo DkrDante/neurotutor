@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import shutil
 from pathlib import Path
 import chess
@@ -37,19 +38,51 @@ def index():
 @app.websocket("/ws/session")
 async def session_endpoint(websocket: WebSocket):
     await websocket.accept()
+
+    if not DEFAULT_CHECKPOINT.exists():
+        await websocket.send_json({
+            "type": "error",
+            "message": f"Model checkpoint not found at {DEFAULT_CHECKPOINT}. Run training first (see README).",
+        })
+        return
+
     eeg_source = SimulatedEEGSource(target_state="Focused")
-    task_engine = PuzzleTaskEngine(evaluator=build_evaluator())
+    evaluator = build_evaluator()
+    task_engine = PuzzleTaskEngine(evaluator=evaluator)
     predictor = StatePredictor(DEFAULT_CHECKPOINT)
     session = TutorSession(eeg_source, task_engine, predictor, RuleBasedPolicy(), _store)
 
+    async def stream_eeg() -> None:
+        # Continuously fill the epoch buffer so extract_epoch() sees a full 4.0s of real
+        # signal instead of a single zero-padded 0.25s chunk (which made the GCN branch
+        # see ~99.97% zeros at serving time while training used full 4.0s chunks).
+        async for chunk in eeg_source.stream():
+            session.record_eeg_chunk(chunk)
+
+    eeg_task = asyncio.create_task(stream_eeg())
     try:
         while True:
             puzzle = session.next_puzzle()
-            session.record_eeg_chunk(eeg_source.generate_chunk())
-            await websocket.send_json({"type": "puzzle", "puzzle_id": puzzle.puzzle_id, "fen": puzzle.fen})
+            await websocket.send_json({
+                "type": "puzzle",
+                "puzzle_id": puzzle.puzzle_id,
+                "fen": puzzle.fen,
+            })
 
-            message = await websocket.receive_json()
-            update = session.submit_move(puzzle, message["move_uci"], message["time_to_move"])
+            while True:
+                message = await websocket.receive_json()
+                try:
+                    move_uci = message["move_uci"]
+                    time_to_move = float(message["time_to_move"])
+                except (KeyError, TypeError, ValueError) as exc:
+                    await websocket.send_json({"type": "error", "message": f"Malformed move: {exc}"})
+                    continue
+                # submit_move stays synchronous on the event loop on purpose: it contains
+                # no await, so the stream_eeg() task cannot interleave mid-way through it.
+                # Offloading it (asyncio.to_thread) is deferred until EpochBuffer, a plain
+                # list, is made thread-safe — otherwise it would race with stream_eeg().
+                update = session.submit_move(puzzle, move_uci, time_to_move)
+                break
 
             await websocket.send_json({
                 "type": "update",
@@ -64,5 +97,9 @@ async def session_endpoint(websocket: WebSocket):
                 },
                 "difficulty": session.difficulty,
             })
+            await asyncio.sleep(update.action.pacing_delay)
     except WebSocketDisconnect:
         pass
+    finally:
+        eeg_task.cancel()
+        evaluator.close()

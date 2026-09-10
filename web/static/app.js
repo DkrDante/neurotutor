@@ -28,6 +28,7 @@ function squareName(rankIdx, fileIdx) {
 let selectedSquare = null;
 let attemptStartMs = null;
 let ws = null;
+let lastServerError = null;
 
 function clearSelection() {
   selectedSquare = null;
@@ -60,6 +61,11 @@ function onSquareClick(square, el) {
     el.classList.add("selected");
     return;
   }
+  if (square === selectedSquare) {
+    // Clicking the same square again means "deselect", not the null move a1a1.
+    clearSelection();
+    return;
+  }
   const moveUci = selectedSquare + square;
   const timeToMove = (performance.now() - attemptStartMs) / 1000.0;
   ws.send(JSON.stringify({ move_uci: moveUci, time_to_move: timeToMove }));
@@ -79,7 +85,19 @@ function connect() {
       document.getElementById("difficulty").textContent = msg.difficulty.toFixed(0);
       document.getElementById("hint").hidden = !msg.action.show_hint;
       document.getElementById("feedback").textContent = msg.correct ? "Correct!" : "Not quite — next puzzle incoming.";
+    } else if (msg.type === "error") {
+      lastServerError = msg.message;
+      document.getElementById("feedback").textContent = msg.message;
     }
+  };
+  ws.onerror = () => {
+    document.getElementById("feedback").textContent = "Connection error.";
+  };
+  ws.onclose = () => {
+    // Keep a server-sent explanation visible rather than replacing it with a generic notice.
+    document.getElementById("feedback").textContent = lastServerError
+      ? `${lastServerError} (connection closed)`
+      : "Connection closed.";
   };
 }
 
