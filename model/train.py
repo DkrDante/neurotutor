@@ -54,7 +54,7 @@ def train(data_dir: Path, checkpoint_path: Path, epochs: int = 20, batch_size: i
 
     test_ds = NpzSequenceDataset(data_dir / "test.npz")
     test_loader = DataLoader(test_ds, batch_size=batch_size)
-    model.load_state_dict(torch.load(checkpoint_path))
+    model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
     test_accuracy, test_f1 = evaluate(model, test_loader)
     return {"best_val_accuracy": best_val_accuracy, "test_accuracy": test_accuracy, "test_f1": test_f1}
 
