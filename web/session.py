@@ -45,8 +45,11 @@ class TutorSession:
         self.epoch_buffer.add_chunk(chunk)
 
     def submit_move(self, puzzle: Puzzle, move_uci: str, time_to_move: float) -> SessionUpdate:
-        start_time = time.monotonic()
         behavior_event = self.task_engine.submit_move(puzzle, move_uci, time_to_move)
+        # sense_to_adapt_latency covers only EEG processing + inference + policy decision.
+        # The task-engine/evaluator call above (seconds under Stockfish) and the storage
+        # write below are deliberately excluded — neither is part of "sense -> adapt".
+        start_time = time.monotonic()
         epoch = self.epoch_buffer.extract_epoch()
         node_features = extract_node_features(epoch.samples, self.eeg_source.sample_rate)
         behavior_vector = behavior_to_vector(behavior_event)

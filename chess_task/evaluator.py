@@ -9,22 +9,31 @@ class MoveEvaluator(ABC):
     def eval_loss(self, board: chess.Board, played_move: chess.Move, best_move: chess.Move) -> float:
         raise NotImplementedError
 
+    def close(self) -> None:
+        """Release any resources (e.g. engine subprocesses). No-op by default."""
+        return None
+
 class StockfishEvaluator(MoveEvaluator):
     def __init__(self, binary_path: str = "stockfish", depth: int = 10):
         if shutil.which(binary_path) is None:
             raise FileNotFoundError(f"Stockfish binary not found: {binary_path}")
         self.binary_path = binary_path
         self.depth = depth
+        # One long-lived engine subprocess for the evaluator's lifetime: spawning a
+        # fresh process per _score() call dominated the cost of every incorrect move.
+        self._engine = chess.engine.SimpleEngine.popen_uci(binary_path)
 
     def _score(self, board: chess.Board, move: chess.Move) -> int:
         board = board.copy()
         board.push(move)
-        with chess.engine.SimpleEngine.popen_uci(self.binary_path) as engine:
-            info = engine.analyse(board, chess.engine.Limit(depth=self.depth))
-            score = info["score"].pov(not board.turn)
-            return score.score(mate_score=10000)
+        info = self._engine.analyse(board, chess.engine.Limit(depth=self.depth))
+        score = info["score"].pov(not board.turn)
+        return score.score(mate_score=10000)
 
     def eval_loss(self, board: chess.Board, played_move: chess.Move, best_move: chess.Move) -> float:
         best_score = self._score(board, best_move)
         played_score = self._score(board, played_move)
         return float(max(0, best_score - played_score))
+
+    def close(self) -> None:
+        self._engine.quit()
