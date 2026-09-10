@@ -1,4 +1,5 @@
 import chess
+import chess.engine
 import pytest
 from chess_task.base import Puzzle, BehaviorEvent
 from chess_task.evaluator import MoveEvaluator
@@ -62,3 +63,42 @@ def test_submit_move_legal_uci_but_illegal_move_is_incorrect(illegal_move):
 
 def test_null_evaluator_close_is_a_noop():
     FakeEvaluator().close()  # MoveEvaluator provides a default no-op close()
+
+class _StubEngine:
+    """Stands in for chess.engine.SimpleEngine so this runs without the binary."""
+    def __init__(self):
+        self.analyse_calls = 0
+        self.quit_calls = 0
+
+    def analyse(self, board, limit):
+        self.analyse_calls += 1
+        return {"score": chess.engine.PovScore(chess.engine.Cp(10), chess.WHITE)}
+
+    def quit(self):
+        self.quit_calls += 1
+
+def test_stockfish_evaluator_opens_one_engine_and_reuses_it(monkeypatch):
+    """Regression guard: _score() used to spawn a fresh subprocess on every call."""
+    import chess_task.evaluator as evaluator_module
+
+    spawns = []
+    stub = _StubEngine()
+
+    monkeypatch.setattr(evaluator_module.shutil, "which", lambda _binary: "/fake/stockfish")
+    monkeypatch.setattr(
+        evaluator_module.chess.engine.SimpleEngine, "popen_uci",
+        staticmethod(lambda binary: (spawns.append(binary), stub)[1]),
+    )
+
+    evaluator = evaluator_module.StockfishEvaluator()
+    assert len(spawns) == 1  # opened once in __init__
+
+    board = chess.Board("2k5/1ppp4/8/8/8/8/8/R6K w - - 0 1")
+    for _ in range(3):
+        evaluator.eval_loss(board, chess.Move.from_uci("h1g1"), chess.Move.from_uci("a1a8"))
+
+    assert len(spawns) == 1  # ...and never reopened, despite 6 analyse() calls
+    assert stub.analyse_calls == 6
+
+    evaluator.close()
+    assert stub.quit_calls == 1
