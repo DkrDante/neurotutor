@@ -1,2 +1,20 @@
 <!DOCTYPE html>
-<html><head><title>NeuroTutor</title></head><body>Loading...</body></html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>NeuroTutor — Chess Pilot</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <h1>NeuroTutor</h1>
+  <div id="board"></div>
+  <div id="status">
+    <div>State: <span id="state">-</span> (confidence <span id="confidence">-</span>)</div>
+    <div>Difficulty: <span id="difficulty">-</span></div>
+    <div id="hint" hidden>Hint: overloaded/confused detected — take your time and re-scan the board.</div>
+    <div id="feedback"></div>
+  </div>
+  <p>Click a piece's square, then click the destination square to move.</p>
+  <script src="/static/app.js"></script>
+</body>
+</html>

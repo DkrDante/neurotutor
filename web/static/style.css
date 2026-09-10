@@ -1,0 +1,9 @@
+body { font-family: system-ui, sans-serif; margin: 2rem; }
+#board { display: grid; grid-template-columns: repeat(8, 48px); grid-template-rows: repeat(8, 48px); border: 2px solid #333; width: max-content; }
+.square { display: flex; align-items: center; justify-content: center; font-size: 32px; cursor: pointer; user-select: none; }
+.square.light { background: #eeeed2; }
+.square.dark { background: #769656; }
+.square.selected { outline: 3px solid #ff5555; outline-offset: -3px; }
+#status { margin-top: 1rem; font-size: 18px; }
+#hint { color: #b45309; font-weight: bold; }
+#feedback { margin-top: 0.5rem; }
