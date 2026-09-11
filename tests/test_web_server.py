@@ -8,8 +8,19 @@ from common.config import NUM_CHANNELS, BAND_NAMES, NUM_BEHAVIOR_FEATS
 from common.states import STATES
 import web.server as server_module
 from storage.db import SessionStore
+from chess_task.base import Puzzle
 from chess_task.puzzles import PuzzleTaskEngine
 from chess_task.evaluator import MoveEvaluator
+
+def _fix_served_puzzle(monkeypatch, puzzle: Puzzle) -> None:
+    """Force session_endpoint's PuzzleTaskEngine to always serve exactly this puzzle,
+    regardless of difficulty, for tests that need a specific known position."""
+    class FixedPuzzleEngine(PuzzleTaskEngine):
+        def get_puzzle(self, difficulty):
+            return puzzle
+    monkeypatch.setattr(
+        server_module, "PuzzleTaskEngine", lambda evaluator: FixedPuzzleEngine(evaluator=evaluator),
+    )
 
 class _NoOpEvaluator(MoveEvaluator):
     def eval_loss(self, board, played_move, best_move) -> float:
@@ -244,6 +255,101 @@ def test_check_move_explains_an_illegal_move_without_scoring(tmp_path, monkeypat
 
         summary = store.get_session_summary(puzzle_msg["session_id"])
         assert summary["num_attempts"] == 0  # a check_move query is never scored
+
+def test_multi_move_puzzle_auto_plays_opponent_and_continues(tmp_path, monkeypatch):
+    _install_test_server(tmp_path, monkeypatch)
+    _fix_served_puzzle(monkeypatch, Puzzle(
+        puzzle_id="mm01", fen="3qk3/6pp/8/8/8/8/8/R5K1 w - - 0 1",
+        solution_move="a1a8", solution_moves=["a1a8", "h7h6", "a8d8"], rating=1200,
+    ))
+
+    client = TestClient(server_module.app)
+    with client.websocket_connect("/ws/session") as ws:
+        puzzle_msg = ws.receive_json()
+        assert puzzle_msg["puzzle_id"] == "mm01"
+        assert puzzle_msg["solver_color"] == "white"
+
+        ws.send_json({
+            "move_uci": "a1a8", "time_to_move": 2.0, "attempt_token": puzzle_msg["attempt_token"],
+        })
+        update_msg = ws.receive_json()
+        assert update_msg["type"] == "update"
+        assert update_msg["status"] == "continue"
+        assert update_msg["correct"] is True
+        assert update_msg["opponent_move"] == "h7h6"
+
+        # Same puzzle continues: puzzle_id unchanged, board reflects the opponent's
+        # auto-played reply (the h7 pawn has moved to h6), fresh attempt_token.
+        next_msg = ws.receive_json()
+        assert next_msg["type"] == "puzzle"
+        assert next_msg["puzzle_id"] == "mm01"
+        assert next_msg["attempt_token"] != puzzle_msg["attempt_token"]
+        board_after_opponent = chess.Board(next_msg["fen"])
+        assert board_after_opponent.piece_at(chess.H6) is not None
+        assert board_after_opponent.piece_at(chess.H7) is None
+
+        ws.send_json({
+            "move_uci": "a8d8", "time_to_move": 2.0, "attempt_token": next_msg["attempt_token"],
+        })
+        final_update = ws.receive_json()
+        assert final_update["type"] == "update"
+        assert final_update["status"] == "solved"
+        assert final_update["correct"] is True
+        assert final_update["opponent_move"] is None
+
+        brand_new_puzzle = ws.receive_json()
+        assert brand_new_puzzle["type"] == "puzzle"
+
+def test_wrong_legal_move_resets_puzzle_for_retry(tmp_path, monkeypatch):
+    _install_test_server(tmp_path, monkeypatch)
+
+    client = TestClient(server_module.app)
+    with client.websocket_connect("/ws/session") as ws:
+        puzzle_msg = ws.receive_json()
+        solution = _solution_for(puzzle_msg["puzzle_id"])
+        board = chess.Board(puzzle_msg["fen"])
+        wrong_move = next(m.uci() for m in board.legal_moves if m.uci() != solution)
+
+        ws.send_json({
+            "move_uci": wrong_move, "time_to_move": 2.0, "attempt_token": puzzle_msg["attempt_token"],
+        })
+        update_msg = ws.receive_json()
+        assert update_msg["type"] == "update"
+        assert update_msg["status"] == "retry"
+        assert update_msg["correct"] is False
+
+        retry_puzzle = ws.receive_json()
+        assert retry_puzzle["type"] == "puzzle"
+        assert retry_puzzle["puzzle_id"] == puzzle_msg["puzzle_id"]
+        assert retry_puzzle["fen"] == puzzle_msg["fen"]  # reset to the original position
+        assert retry_puzzle["attempt_token"] != puzzle_msg["attempt_token"]
+
+        # The reset puzzle is still fully playable with the real solution.
+        ws.send_json({
+            "move_uci": solution, "time_to_move": 2.0, "attempt_token": retry_puzzle["attempt_token"],
+        })
+        final_update = ws.receive_json()
+        assert final_update["type"] == "update"
+        assert final_update["correct"] is True
+
+def test_solver_color_reported_for_black_to_move_puzzle(tmp_path, monkeypatch):
+    _install_test_server(tmp_path, monkeypatch)
+    _fix_served_puzzle(monkeypatch, Puzzle(
+        puzzle_id="blacktest", fen="4k3/8/8/8/8/8/8/4K3 b - - 0 1",
+        solution_move="e8d8", solution_moves=["e8d8"], rating=1000,
+    ))
+
+    client = TestClient(server_module.app)
+    with client.websocket_connect("/ws/session") as ws:
+        puzzle_msg = ws.receive_json()
+        assert puzzle_msg["solver_color"] == "black"
+
+        # "Own" pieces for this puzzle are the lowercase (Black) ones — legal_targets
+        # for the black king's square must be non-empty, confirming turn/color handling
+        # is consistent end to end, not just in the reported label.
+        ws.send_json({"type": "hint", "square": "e8"})
+        hint_msg = ws.receive_json()
+        assert hint_msg["targets"] == ["d7", "d8", "e7", "f7", "f8"]
 
 def test_missing_checkpoint_reports_error_instead_of_hanging(tmp_path, monkeypatch):
     monkeypatch.setattr(server_module, "DEFAULT_CHECKPOINT", tmp_path / "absent.pt")

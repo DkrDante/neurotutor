@@ -53,6 +53,7 @@ let currentFen = null;
 let currentBoard = null;
 let boardFlipped = false;
 let lastMove = null; // {from, to} of the most recently submitted move, for highlighting
+let solverColor = "white"; // which side the human plays THIS puzzle — puzzles aren't all White-to-move
 
 function pieceAt(square) {
   if (!currentBoard) return null;
@@ -61,8 +62,9 @@ function pieceAt(square) {
 }
 
 function isOwnPiece(piece) {
-  // Every puzzle in this build is White-to-move, so "own" pieces are the uppercase ones.
-  return !!piece && piece === piece.toUpperCase();
+  if (!piece) return false;
+  const isUppercase = piece === piece.toUpperCase();
+  return solverColor === "white" ? isUppercase : !isUppercase;
 }
 
 function clearSelection() {
@@ -169,7 +171,9 @@ function onSquareClick(square) {
     let moveUci = selectedSquare + square;
     const piece = pieceAt(selectedSquare);
     const destRank = square[1];
-    if ((piece === "P" && destRank === "8")) {
+    const isPromotion =
+      (piece === "P" && destRank === "8") || (piece === "p" && destRank === "1");
+    if (isPromotion) {
       moveUci += "q"; // Auto-queen; no promotion-choice UI.
     }
     const timeToMove = (performance.now() - attemptStartMs) / 1000.0;
@@ -236,6 +240,10 @@ function connect() {
 
     if (msg.type === "puzzle") {
       currentAttemptToken = msg.attempt_token;
+      if (msg.solver_color && msg.solver_color !== solverColor) {
+        solverColor = msg.solver_color;
+        boardFlipped = solverColor === "black"; // orient the board to the human's side
+      }
       renderBoard(msg.fen);
       setCallout(feedbackEl, "", null);
     } else if (msg.type === "hint") {
@@ -259,11 +267,13 @@ function connect() {
       } else {
         hintBox.hidden = true;
       }
-      setCallout(
-        feedbackEl,
-        msg.correct ? "Correct! Next puzzle incoming." : "Not quite — next puzzle incoming.",
-        msg.correct ? "correct" : "incorrect",
-      );
+      if (msg.status === "solved") {
+        setCallout(feedbackEl, "Correct! Puzzle solved — next one incoming.", "correct");
+      } else if (msg.status === "continue") {
+        setCallout(feedbackEl, `Correct! Opponent plays ${msg.opponent_move} — keep going.`, "continue");
+      } else {
+        setCallout(feedbackEl, "There's a better move — try again.", "incorrect");
+      }
     } else if (msg.type === "error") {
       lastServerError = msg.message;
       setCallout(feedbackEl, msg.message, "error");

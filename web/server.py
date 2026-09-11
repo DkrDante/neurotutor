@@ -8,6 +8,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from eeg.simulated import SimulatedEEGSource
+from chess_task.base import Puzzle
 from chess_task.puzzles import PuzzleTaskEngine
 from chess_task.evaluator import MoveEvaluator, StockfishEvaluator
 from chess_task.move_explainer import explain_illegal_move, legal_targets
@@ -69,97 +70,139 @@ async def session_endpoint(websocket: WebSocket):
     try:
         while True:
             puzzle = session.next_puzzle()
-            # A fresh token per puzzle round: pacing_delay's asyncio.sleep (below) means a
-            # client message can arrive after the NEXT puzzle has already been sent. Without
-            # this, that stale move would be evaluated against the wrong puzzle. The client
-            # echoes this token back in its move message; anything else is discarded here.
-            attempt_token = str(uuid.uuid4())
-            # A read-only board for this puzzle round, used only to answer "what are
-            # this piece's legal moves" / "why is this move illegal" — never pushed to,
-            # so it stays valid for the whole round regardless of how many times the
-            # player selects a piece or misclicks before submitting a real move.
+            # The solver's own moves plus the (pre-scripted, not engine-played) opponent
+            # replies in between, e.g. [solver1, opponent1, solver2, ...]. Puzzles loaded
+            # from CSV always populate this; the [puzzle.solution_move] fallback only
+            # matters for a Puzzle built directly (e.g. in a test) without it.
+            solution_moves = puzzle.solution_moves or [puzzle.solution_move]
             board = chess.Board(puzzle.fen)
-            await websocket.send_json({
-                "type": "puzzle",
-                "puzzle_id": puzzle.puzzle_id,
-                "fen": puzzle.fen,
-                "session_id": session.session_id,
-                "attempt_token": attempt_token,
-            })
+            solver_is_white = board.turn == chess.WHITE
+            ply_index = 0  # index into solution_moves the solver's NEXT move must match
 
-            while True:
-                message = await websocket.receive_json()
-                msg_type = message.get("type")
+            while True:  # one iteration per solver decision point: fresh puzzle, retry, or continuation
+                # A fresh token per decision point: pacing_delay's asyncio.sleep (below)
+                # means a client message can arrive after the next one has already been
+                # sent. Without this, that stale move would be evaluated against the
+                # wrong position. The client echoes this token back in its move message;
+                # anything else is discarded here.
+                attempt_token = str(uuid.uuid4())
+                await websocket.send_json({
+                    "type": "puzzle",
+                    "puzzle_id": puzzle.puzzle_id,
+                    "fen": board.fen(),
+                    "session_id": session.session_id,
+                    "attempt_token": attempt_token,
+                    "solver_color": "white" if solver_is_white else "black",
+                })
 
-                if msg_type == "hint":
-                    square = message.get("square", "")
-                    await websocket.send_json({
-                        "type": "hint", "square": square, "targets": legal_targets(board, square),
-                    })
-                    continue
+                while True:
+                    message = await websocket.receive_json()
+                    msg_type = message.get("type")
 
-                if msg_type == "check_move":
-                    move_uci = message.get("move_uci", "")
-                    await websocket.send_json({
-                        "type": "invalid_move",
-                        "reason": explain_illegal_move(board, move_uci),
-                        "targets": legal_targets(board, move_uci[:2]) if len(move_uci) >= 2 else [],
-                    })
-                    continue
+                    if msg_type == "hint":
+                        square = message.get("square", "")
+                        await websocket.send_json({
+                            "type": "hint", "square": square, "targets": legal_targets(board, square),
+                        })
+                        continue
 
-                try:
-                    move_uci = message["move_uci"]
-                    time_to_move = float(message["time_to_move"])
-                except (KeyError, TypeError, ValueError) as exc:
-                    await websocket.send_json({"type": "error", "message": f"Malformed move: {exc}"})
-                    continue
-                if message.get("attempt_token") != attempt_token:
-                    await websocket.send_json({
-                        "type": "error",
-                        "message": "Stale move ignored (a new puzzle has already started).",
-                    })
-                    continue
+                    if msg_type == "check_move":
+                        candidate = message.get("move_uci", "")
+                        await websocket.send_json({
+                            "type": "invalid_move",
+                            "reason": explain_illegal_move(board, candidate),
+                            "targets": legal_targets(board, candidate[:2]) if len(candidate) >= 2 else [],
+                        })
+                        continue
 
-                # Defense in depth: the frontend only lets a player click legal target
-                # squares, so this should already be legal — but never trust the client
-                # alone. An illegal move here is NOT scored and does NOT advance the
-                # puzzle; the player just gets a reason and can try again on the same
-                # attempt_token, exactly like a "hint" or "check_move" query.
-                try:
-                    parsed = chess.Move.from_uci(move_uci)
-                    is_legal = parsed in board.legal_moves
-                except (ValueError, TypeError):
-                    is_legal = False
-                if not is_legal:
-                    await websocket.send_json({
-                        "type": "invalid_move",
-                        "reason": explain_illegal_move(board, move_uci),
-                        "targets": legal_targets(board, move_uci[:2]) if len(move_uci) >= 2 else [],
-                    })
-                    continue
+                    try:
+                        move_uci = message["move_uci"]
+                        time_to_move = float(message["time_to_move"])
+                    except (KeyError, TypeError, ValueError) as exc:
+                        await websocket.send_json({"type": "error", "message": f"Malformed move: {exc}"})
+                        continue
+                    if message.get("attempt_token") != attempt_token:
+                        await websocket.send_json({
+                            "type": "error",
+                            "message": "Stale move ignored (a new puzzle has already started).",
+                        })
+                        continue
 
+                    # Defense in depth: the frontend only lets a player click legal target
+                    # squares, so this should already be legal — but never trust the client
+                    # alone. An illegal move here is NOT scored and does NOT advance or
+                    # reset the puzzle; the player just gets a reason and can try again.
+                    try:
+                        parsed = chess.Move.from_uci(move_uci)
+                        is_legal = parsed in board.legal_moves
+                    except (ValueError, TypeError):
+                        is_legal = False
+                    if not is_legal:
+                        await websocket.send_json({
+                            "type": "invalid_move",
+                            "reason": explain_illegal_move(board, move_uci),
+                            "targets": legal_targets(board, move_uci[:2]) if len(move_uci) >= 2 else [],
+                        })
+                        continue
+
+                    break  # legal move, ready to score
+
+                expected_move = solution_moves[ply_index] if ply_index < len(solution_moves) else None
+                is_right_move = move_uci == expected_move
+
+                # submit_move still takes a single-ply Puzzle (unchanged interface) built
+                # fresh for whichever ply/position is live right now — the rest of the
+                # pipeline (model, adaptive engine, storage) doesn't need to know anything
+                # about multi-move puzzles.
+                scoring_puzzle = Puzzle(
+                    puzzle_id=puzzle.puzzle_id, fen=board.fen(),
+                    solution_move=expected_move or move_uci, rating=puzzle.rating,
+                )
                 # submit_move stays synchronous on the event loop on purpose: it contains
                 # no await, so the stream_eeg() task cannot interleave mid-way through it.
                 # Offloading it (asyncio.to_thread) is deferred until EpochBuffer, a plain
                 # list, is made thread-safe — otherwise it would race with stream_eeg().
-                update = session.submit_move(puzzle, move_uci, time_to_move)
-                break
+                update = session.submit_move(scoring_puzzle, move_uci, time_to_move)
 
-            await websocket.send_json({
-                "type": "update",
-                "correct": update.correct,
-                "predicted_state": update.predicted_state,
-                "confidence": update.confidence,
-                "probs": update.probs,
-                "action": {
-                    "difficulty_delta": update.action.difficulty_delta,
-                    "show_hint": update.action.show_hint,
-                    "pacing_delay": update.action.pacing_delay,
-                },
-                "difficulty": session.difficulty,
-                "session_id": session.session_id,
-            })
-            await asyncio.sleep(update.action.pacing_delay)
+                opponent_move = None
+                if is_right_move:
+                    board.push(chess.Move.from_uci(move_uci))
+                    ply_index += 1
+                    if ply_index >= len(solution_moves):
+                        status = "solved"
+                    else:
+                        opponent_move = solution_moves[ply_index]
+                        board.push(chess.Move.from_uci(opponent_move))
+                        ply_index += 1
+                        status = "continue"
+                else:
+                    status = "retry"
+
+                await websocket.send_json({
+                    "type": "update",
+                    "status": status,
+                    "correct": update.correct,
+                    "opponent_move": opponent_move,
+                    "predicted_state": update.predicted_state,
+                    "confidence": update.confidence,
+                    "probs": update.probs,
+                    "action": {
+                        "difficulty_delta": update.action.difficulty_delta,
+                        "show_hint": update.action.show_hint,
+                        "pacing_delay": update.action.pacing_delay,
+                    },
+                    "difficulty": session.difficulty,
+                    "session_id": session.session_id,
+                })
+                await asyncio.sleep(update.action.pacing_delay)
+
+                if status == "solved":
+                    break  # move to a brand-new puzzle in the outer loop
+                if status == "retry":
+                    board = chess.Board(puzzle.fen)  # same puzzle, reset to its start
+                    ply_index = 0
+                # status == "continue": loop again on the same puzzle with the board
+                # already advanced past the opponent's scripted reply.
     except WebSocketDisconnect:
         pass
     finally:

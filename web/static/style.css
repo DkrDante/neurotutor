@@ -167,6 +167,7 @@ body {
 .callout-correct { background: #e8f7ec; color: #1f7a3a; border: 1px solid #bfe6c9; }
 .callout-incorrect { background: #fdeceb; color: #b3261e; border: 1px solid #f5c6c3; }
 .callout-invalid { background: #fff2e0; color: #9a5b00; border: 1px solid #f6d9a8; }
+.callout-continue { background: #e8f1fb; color: #1d4ed8; border: 1px solid #bcd6f5; }
 .callout-error { background: #fdeceb; color: #b3261e; border: 1px solid #f5c6c3; }
 
 .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.25rem; }

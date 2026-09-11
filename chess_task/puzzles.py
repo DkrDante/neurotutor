@@ -23,10 +23,15 @@ class PuzzleTaskEngine(TaskEngine):
         with open(path, newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
+                # "solution_move" holds one or more space-separated UCI moves: a single
+                # move for the original single-ply puzzles, or the full solver/opponent/
+                # solver/... sequence for a multi-move puzzle. No CSV schema change needed.
+                solution_moves = row["solution_move"].split()
                 puzzles.append(Puzzle(
                     puzzle_id=row["puzzle_id"],
                     fen=row["fen"],
-                    solution_move=row["solution_move"],
+                    solution_move=solution_moves[0],
+                    solution_moves=solution_moves,
                     rating=int(row["rating"]),
                 ))
         return puzzles
