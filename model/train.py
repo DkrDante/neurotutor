@@ -9,11 +9,15 @@ from model.fusion import FusionLSTMClassifier
 from common.config import NUM_CHANNELS, BAND_NAMES, NUM_BEHAVIOR_FEATS
 from common.states import STATES
 
-def evaluate(model, loader):
+def evaluate(model, loader, mask_fn=None):
+    """mask_fn, if given, is applied to (eeg_seq, behavior_seq) before the forward pass —
+    used by model/ablation.py to zero out one modality's input for ablation runs."""
     model.eval()
     all_preds, all_labels = [], []
     with torch.no_grad():
         for eeg_seq, behavior_seq, labels in loader:
+            if mask_fn is not None:
+                eeg_seq, behavior_seq = mask_fn(eeg_seq, behavior_seq)
             logits = model(eeg_seq, behavior_seq)
             preds = torch.argmax(logits, dim=-1)
             all_preds.extend(preds.tolist())
@@ -22,7 +26,7 @@ def evaluate(model, loader):
     f1 = f1_score(all_labels, all_preds, average="macro")
     return accuracy, f1
 
-def train(data_dir: Path, checkpoint_path: Path, epochs: int = 20, batch_size: int = 16, lr: float = 1e-3) -> dict:
+def train(data_dir: Path, checkpoint_path: Path, epochs: int = 20, batch_size: int = 16, lr: float = 1e-3, mask_fn=None) -> dict:
     data_dir = Path(data_dir)
     checkpoint_path = Path(checkpoint_path)
     train_ds = NpzSequenceDataset(data_dir / "train.npz")
@@ -42,12 +46,14 @@ def train(data_dir: Path, checkpoint_path: Path, epochs: int = 20, batch_size: i
     for _ in range(epochs):
         model.train()
         for eeg_seq, behavior_seq, labels in train_loader:
+            if mask_fn is not None:
+                eeg_seq, behavior_seq = mask_fn(eeg_seq, behavior_seq)
             optimizer.zero_grad()
             logits = model(eeg_seq, behavior_seq)
             loss = loss_fn(logits, labels)
             loss.backward()
             optimizer.step()
-        val_accuracy, _ = evaluate(model, val_loader)
+        val_accuracy, _ = evaluate(model, val_loader, mask_fn=mask_fn)
         if val_accuracy > best_val_accuracy:
             best_val_accuracy = val_accuracy
             torch.save(model.state_dict(), checkpoint_path)
@@ -55,7 +61,7 @@ def train(data_dir: Path, checkpoint_path: Path, epochs: int = 20, batch_size: i
     test_ds = NpzSequenceDataset(data_dir / "test.npz")
     test_loader = DataLoader(test_ds, batch_size=batch_size)
     model.load_state_dict(torch.load(checkpoint_path, weights_only=True))
-    test_accuracy, test_f1 = evaluate(model, test_loader)
+    test_accuracy, test_f1 = evaluate(model, test_loader, mask_fn=mask_fn)
     return {"best_val_accuracy": best_val_accuracy, "test_accuracy": test_accuracy, "test_f1": test_f1}
 
 def main():
