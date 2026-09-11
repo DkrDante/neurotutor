@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse
 from eeg.simulated import SimulatedEEGSource
 from chess_task.puzzles import PuzzleTaskEngine
 from chess_task.evaluator import MoveEvaluator, StockfishEvaluator
+from chess_task.move_explainer import explain_illegal_move, legal_targets
 from model.inference import StatePredictor
 from adaptive.rule_based import RuleBasedPolicy
 from storage.db import SessionStore
@@ -73,6 +74,11 @@ async def session_endpoint(websocket: WebSocket):
             # this, that stale move would be evaluated against the wrong puzzle. The client
             # echoes this token back in its move message; anything else is discarded here.
             attempt_token = str(uuid.uuid4())
+            # A read-only board for this puzzle round, used only to answer "what are
+            # this piece's legal moves" / "why is this move illegal" — never pushed to,
+            # so it stays valid for the whole round regardless of how many times the
+            # player selects a piece or misclicks before submitting a real move.
+            board = chess.Board(puzzle.fen)
             await websocket.send_json({
                 "type": "puzzle",
                 "puzzle_id": puzzle.puzzle_id,
@@ -83,6 +89,24 @@ async def session_endpoint(websocket: WebSocket):
 
             while True:
                 message = await websocket.receive_json()
+                msg_type = message.get("type")
+
+                if msg_type == "hint":
+                    square = message.get("square", "")
+                    await websocket.send_json({
+                        "type": "hint", "square": square, "targets": legal_targets(board, square),
+                    })
+                    continue
+
+                if msg_type == "check_move":
+                    move_uci = message.get("move_uci", "")
+                    await websocket.send_json({
+                        "type": "invalid_move",
+                        "reason": explain_illegal_move(board, move_uci),
+                        "targets": legal_targets(board, move_uci[:2]) if len(move_uci) >= 2 else [],
+                    })
+                    continue
+
                 try:
                     move_uci = message["move_uci"]
                     time_to_move = float(message["time_to_move"])
@@ -95,6 +119,25 @@ async def session_endpoint(websocket: WebSocket):
                         "message": "Stale move ignored (a new puzzle has already started).",
                     })
                     continue
+
+                # Defense in depth: the frontend only lets a player click legal target
+                # squares, so this should already be legal — but never trust the client
+                # alone. An illegal move here is NOT scored and does NOT advance the
+                # puzzle; the player just gets a reason and can try again on the same
+                # attempt_token, exactly like a "hint" or "check_move" query.
+                try:
+                    parsed = chess.Move.from_uci(move_uci)
+                    is_legal = parsed in board.legal_moves
+                except (ValueError, TypeError):
+                    is_legal = False
+                if not is_legal:
+                    await websocket.send_json({
+                        "type": "invalid_move",
+                        "reason": explain_illegal_move(board, move_uci),
+                        "targets": legal_targets(board, move_uci[:2]) if len(move_uci) >= 2 else [],
+                    })
+                    continue
+
                 # submit_move stays synchronous on the event loop on purpose: it contains
                 # no await, so the stream_eeg() task cannot interleave mid-way through it.
                 # Offloading it (asyncio.to_thread) is deferred until EpochBuffer, a plain
