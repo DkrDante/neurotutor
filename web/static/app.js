@@ -30,6 +30,8 @@ let attemptStartMs = null;
 let ws = null;
 let sessionId = null;
 let lastServerError = null;
+let currentAttemptToken = null;
+let boardLocked = false;
 
 function clearSelection() {
   selectedSquare = null;
@@ -54,9 +56,13 @@ function renderBoard(fen) {
   }
   clearSelection();
   attemptStartMs = performance.now();
+  // A new puzzle round has started: the board is playable again, and any move sent
+  // against the previous round's token is now stale and will be rejected server-side.
+  boardLocked = false;
 }
 
 function onSquareClick(square, el) {
+  if (boardLocked) return; // Waiting on the server (pacing delay / next puzzle).
   if (!selectedSquare) {
     selectedSquare = square;
     el.classList.add("selected");
@@ -69,8 +75,13 @@ function onSquareClick(square, el) {
   }
   const moveUci = selectedSquare + square;
   const timeToMove = (performance.now() - attemptStartMs) / 1000.0;
-  ws.send(JSON.stringify({ move_uci: moveUci, time_to_move: timeToMove }));
+  ws.send(JSON.stringify({
+    move_uci: moveUci,
+    time_to_move: timeToMove,
+    attempt_token: currentAttemptToken,
+  }));
   clearSelection();
+  boardLocked = true; // Locked until the next "puzzle" message arrives.
 }
 
 async function showSummary() {
@@ -97,6 +108,7 @@ function connect() {
     const msg = JSON.parse(event.data);
     if (msg.session_id) sessionId = msg.session_id;
     if (msg.type === "puzzle") {
+      currentAttemptToken = msg.attempt_token;
       renderBoard(msg.fen);
       document.getElementById("feedback").textContent = "";
     } else if (msg.type === "update") {
@@ -108,6 +120,7 @@ function connect() {
     } else if (msg.type === "error") {
       lastServerError = msg.message;
       document.getElementById("feedback").textContent = msg.message;
+      boardLocked = false; // A rejected/malformed move must not leave the board stuck.
     }
   };
   ws.onerror = () => {

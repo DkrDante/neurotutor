@@ -1,6 +1,7 @@
 from __future__ import annotations
 import asyncio
 import shutil
+import uuid
 from pathlib import Path
 import chess
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -67,11 +68,17 @@ async def session_endpoint(websocket: WebSocket):
     try:
         while True:
             puzzle = session.next_puzzle()
+            # A fresh token per puzzle round: pacing_delay's asyncio.sleep (below) means a
+            # client message can arrive after the NEXT puzzle has already been sent. Without
+            # this, that stale move would be evaluated against the wrong puzzle. The client
+            # echoes this token back in its move message; anything else is discarded here.
+            attempt_token = str(uuid.uuid4())
             await websocket.send_json({
                 "type": "puzzle",
                 "puzzle_id": puzzle.puzzle_id,
                 "fen": puzzle.fen,
                 "session_id": session.session_id,
+                "attempt_token": attempt_token,
             })
 
             while True:
@@ -81,6 +88,12 @@ async def session_endpoint(websocket: WebSocket):
                     time_to_move = float(message["time_to_move"])
                 except (KeyError, TypeError, ValueError) as exc:
                     await websocket.send_json({"type": "error", "message": f"Malformed move: {exc}"})
+                    continue
+                if message.get("attempt_token") != attempt_token:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Stale move ignored (a new puzzle has already started).",
+                    })
                     continue
                 # submit_move stays synchronous on the event loop on purpose: it contains
                 # no await, so the stream_eeg() task cannot interleave mid-way through it.
