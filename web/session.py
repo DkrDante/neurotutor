@@ -22,6 +22,7 @@ class SessionUpdate:
     probs: dict
     action: Action
     sense_to_adapt_latency: float
+    network_activity: dict
 
 class TutorSession:
     def __init__(
@@ -68,7 +69,11 @@ class TutorSession:
         eeg_seq = self._padded_sequence(self._eeg_history, node_features.shape)
         behavior_seq = self._padded_sequence(self._behavior_history, behavior_vector.shape)
 
-        predicted_state, confidence, probs = self.predictor.predict(eeg_seq, behavior_seq)
+        # predict_with_internals() is a strict superset of predict(): same state/
+        # confidence/probs, plus the real activations/weights the live "network
+        # activity" visualization renders (nothing here is synthetic/decorative).
+        internals = self.predictor.predict_with_internals(eeg_seq, behavior_seq)
+        predicted_state, confidence, probs = internals["state"], internals["confidence"], internals["probs"]
         action = self.policy.decide(predicted_state, confidence)
         self.difficulty = max(400.0, self.difficulty + action.difficulty_delta)
         latency = time.monotonic() - start_time
@@ -84,6 +89,7 @@ class TutorSession:
         return SessionUpdate(
             puzzle=puzzle, correct=behavior_event.correct, predicted_state=predicted_state,
             confidence=confidence, probs=probs, action=action, sense_to_adapt_latency=latency,
+            network_activity=internals,
         )
 
     @staticmethod

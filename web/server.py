@@ -59,12 +59,27 @@ async def session_endpoint(websocket: WebSocket):
     predictor = StatePredictor(DEFAULT_CHECKPOINT)
     session = TutorSession(eeg_source, task_engine, predictor, RuleBasedPolicy(), _store)
 
+    # stream_eeg() (below) and the main loop both send on this one websocket from two
+    # different asyncio tasks; this lock keeps individual send_json calls from
+    # interleaving with each other.
+    send_lock = asyncio.Lock()
+
+    async def send(payload: dict) -> None:
+        async with send_lock:
+            await websocket.send_json(payload)
+
     async def stream_eeg() -> None:
         # Continuously fill the epoch buffer so extract_epoch() sees a full 4.0s of real
         # signal instead of a single zero-padded 0.25s chunk (which made the GCN branch
-        # see ~99.97% zeros at serving time while training used full 4.0s chunks).
+        # see ~99.97% zeros at serving time while training used full 4.0s chunks). Each
+        # chunk is also forwarded to the frontend for the live EEG waveform display —
+        # this is the real streamed signal, not a decorative animation.
         async for chunk in eeg_source.stream():
             session.record_eeg_chunk(chunk)
+            await send({
+                "type": "eeg_chunk",
+                "samples": chunk.samples.tolist(),  # (chunk_samples, num_channels)
+            })
 
     eeg_task = asyncio.create_task(stream_eeg())
     try:
@@ -86,7 +101,7 @@ async def session_endpoint(websocket: WebSocket):
                 # wrong position. The client echoes this token back in its move message;
                 # anything else is discarded here.
                 attempt_token = str(uuid.uuid4())
-                await websocket.send_json({
+                await send({
                     "type": "puzzle",
                     "puzzle_id": puzzle.puzzle_id,
                     "fen": board.fen(),
@@ -101,14 +116,14 @@ async def session_endpoint(websocket: WebSocket):
 
                     if msg_type == "hint":
                         square = message.get("square", "")
-                        await websocket.send_json({
+                        await send({
                             "type": "hint", "square": square, "targets": legal_targets(board, square),
                         })
                         continue
 
                     if msg_type == "check_move":
                         candidate = message.get("move_uci", "")
-                        await websocket.send_json({
+                        await send({
                             "type": "invalid_move",
                             "reason": explain_illegal_move(board, candidate),
                             "targets": legal_targets(board, candidate[:2]) if len(candidate) >= 2 else [],
@@ -119,10 +134,10 @@ async def session_endpoint(websocket: WebSocket):
                         move_uci = message["move_uci"]
                         time_to_move = float(message["time_to_move"])
                     except (KeyError, TypeError, ValueError) as exc:
-                        await websocket.send_json({"type": "error", "message": f"Malformed move: {exc}"})
+                        await send({"type": "error", "message": f"Malformed move: {exc}"})
                         continue
                     if message.get("attempt_token") != attempt_token:
-                        await websocket.send_json({
+                        await send({
                             "type": "error",
                             "message": "Stale move ignored (a new puzzle has already started).",
                         })
@@ -138,7 +153,7 @@ async def session_endpoint(websocket: WebSocket):
                     except (ValueError, TypeError):
                         is_legal = False
                     if not is_legal:
-                        await websocket.send_json({
+                        await send({
                             "type": "invalid_move",
                             "reason": explain_illegal_move(board, move_uci),
                             "targets": legal_targets(board, move_uci[:2]) if len(move_uci) >= 2 else [],
@@ -178,7 +193,7 @@ async def session_endpoint(websocket: WebSocket):
                 else:
                     status = "retry"
 
-                await websocket.send_json({
+                await send({
                     "type": "update",
                     "status": status,
                     "correct": update.correct,
@@ -193,6 +208,7 @@ async def session_endpoint(websocket: WebSocket):
                     },
                     "difficulty": session.difficulty,
                     "session_id": session.session_id,
+                    "network_activity": update.network_activity,
                 })
                 await asyncio.sleep(update.action.pacing_delay)
 

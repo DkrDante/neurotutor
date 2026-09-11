@@ -12,6 +12,15 @@ from chess_task.base import Puzzle
 from chess_task.puzzles import PuzzleTaskEngine
 from chess_task.evaluator import MoveEvaluator
 
+def _recv(ws):
+    """Read the next non-eeg_chunk message. The live server also streams eeg_chunk
+    messages continuously in the background for the waveform display; tests (like a
+    real frontend routing them straight to the chart) only care about the rest."""
+    while True:
+        msg = ws.receive_json()
+        if msg.get("type") != "eeg_chunk":
+            return msg
+
 def _fix_served_puzzle(monkeypatch, puzzle: Puzzle) -> None:
     """Force session_endpoint's PuzzleTaskEngine to always serve exactly this puzzle,
     regardless of difficulty, for tests that need a specific known position."""
@@ -53,7 +62,7 @@ def test_websocket_session_round_trip(tmp_path, monkeypatch):
 
     client = TestClient(server_module.app)
     with client.websocket_connect("/ws/session") as ws:
-        puzzle_msg = ws.receive_json()
+        puzzle_msg = _recv(ws)
         assert puzzle_msg["type"] == "puzzle"
         assert "fen" in puzzle_msg
         assert "session_id" in puzzle_msg
@@ -63,11 +72,17 @@ def test_websocket_session_round_trip(tmp_path, monkeypatch):
             "move_uci": _solution_for(puzzle_msg["puzzle_id"]), "time_to_move": 5.0,
             "attempt_token": puzzle_msg["attempt_token"],
         })
-        update_msg = ws.receive_json()
+        update_msg = _recv(ws)
         assert update_msg["type"] == "update"
         assert update_msg["correct"] is True
         assert update_msg["predicted_state"] in STATES
         assert 0.0 <= update_msg["confidence"] <= 1.0
+
+        # Real internals for the network-activity visualization, not placeholders.
+        activity = update_msg["network_activity"]
+        assert len(activity["gcn1_node_activity"]) == NUM_CHANNELS
+        assert len(activity["gcn_adjacency"]) == NUM_CHANNELS
+        assert len(activity["behavior_activity"]) == NUM_BEHAVIOR_FEATS
 
 def test_stale_attempt_token_is_ignored_not_scored(tmp_path, monkeypatch):
     """Regression test: pacing_delay's asyncio.sleep means a client message can arrive
@@ -78,7 +93,7 @@ def test_stale_attempt_token_is_ignored_not_scored(tmp_path, monkeypatch):
 
     client = TestClient(server_module.app)
     with client.websocket_connect("/ws/session") as ws:
-        first_puzzle = ws.receive_json()
+        first_puzzle = _recv(ws)
         stale_token = first_puzzle["attempt_token"]
 
         # Answer correctly so the server advances to a new puzzle (with a new token).
@@ -86,8 +101,8 @@ def test_stale_attempt_token_is_ignored_not_scored(tmp_path, monkeypatch):
             "move_uci": _solution_for(first_puzzle["puzzle_id"]), "time_to_move": 3.0,
             "attempt_token": stale_token,
         })
-        assert ws.receive_json()["type"] == "update"
-        second_puzzle = ws.receive_json()
+        assert _recv(ws)["type"] == "update"
+        second_puzzle = _recv(ws)
         assert second_puzzle["type"] == "puzzle"
         assert second_puzzle["attempt_token"] != stale_token
 
@@ -96,7 +111,7 @@ def test_stale_attempt_token_is_ignored_not_scored(tmp_path, monkeypatch):
             "move_uci": _solution_for(first_puzzle["puzzle_id"]), "time_to_move": 1.0,
             "attempt_token": stale_token,
         })
-        err = ws.receive_json()
+        err = _recv(ws)
         assert err["type"] == "error"
         assert "stale" in err["message"].lower()
 
@@ -105,7 +120,7 @@ def test_stale_attempt_token_is_ignored_not_scored(tmp_path, monkeypatch):
             "move_uci": _solution_for(second_puzzle["puzzle_id"]), "time_to_move": 2.0,
             "attempt_token": second_puzzle["attempt_token"],
         })
-        update_msg = ws.receive_json()
+        update_msg = _recv(ws)
         assert update_msg["type"] == "update"
 
 def test_live_session_accumulates_real_eeg_not_zero_padding(tmp_path, monkeypatch):
@@ -130,14 +145,14 @@ def test_live_session_accumulates_real_eeg_not_zero_padding(tmp_path, monkeypatc
 
     client = TestClient(server_module.app)
     with client.websocket_connect("/ws/session") as ws:
-        puzzle_msg = ws.receive_json()
+        puzzle_msg = _recv(ws)
         assert puzzle_msg["type"] == "puzzle"
         time.sleep(2.0)  # let the background EEG stream fill the epoch buffer
         ws.send_json({
             "move_uci": _solution_for(puzzle_msg["puzzle_id"]), "time_to_move": 2.0,
             "attempt_token": puzzle_msg["attempt_token"],
         })
-        assert ws.receive_json()["type"] == "update"
+        assert _recv(ws)["type"] == "update"
 
     assert len(sessions) == 1
     node_features = sessions[0]._eeg_history[-1]
@@ -145,30 +160,48 @@ def test_live_session_accumulates_real_eeg_not_zero_padding(tmp_path, monkeypatc
     # signal is two to three orders of magnitude above that.
     assert node_features.sum() > 0.1
 
+def test_eeg_chunk_messages_are_streamed_live(tmp_path, monkeypatch):
+    """The background stream_eeg() task must actually forward chunks to the client,
+    not just record them internally."""
+    _install_test_server(tmp_path, monkeypatch)
+
+    client = TestClient(server_module.app)
+    with client.websocket_connect("/ws/session") as ws:
+        _recv(ws)  # puzzle (discarded)
+        # Read raw messages (not via _recv) until an eeg_chunk shows up.
+        for _ in range(20):
+            msg = ws.receive_json()
+            if msg.get("type") == "eeg_chunk":
+                assert isinstance(msg["samples"], list)
+                assert len(msg["samples"]) > 0
+                assert len(msg["samples"][0]) == NUM_CHANNELS
+                return
+        raise AssertionError("no eeg_chunk message arrived")
+
 def test_websocket_survives_malformed_messages(tmp_path, monkeypatch):
     _install_test_server(tmp_path, monkeypatch)
 
     client = TestClient(server_module.app)
     with client.websocket_connect("/ws/session") as ws:
-        puzzle_msg = ws.receive_json()
+        puzzle_msg = _recv(ws)
         assert puzzle_msg["type"] == "puzzle"
         token = puzzle_msg["attempt_token"]
 
         # Missing move_uci -> KeyError path (checked before the token, same either way).
         ws.send_json({"time_to_move": 3.0, "attempt_token": token})
-        err = ws.receive_json()
+        err = _recv(ws)
         assert err["type"] == "error"
         assert "Malformed move" in err["message"]
 
         # Non-numeric time_to_move -> ValueError path.
         ws.send_json({"move_uci": "a1a8", "time_to_move": "soon", "attempt_token": token})
-        err = ws.receive_json()
+        err = _recv(ws)
         assert err["type"] == "error"
 
         # A same-square "move" (a1a1) is never even a legal move -> invalid_move, and
         # the puzzle does NOT advance: no new puzzle should follow this.
         ws.send_json({"move_uci": "a1a1", "time_to_move": 2.0, "attempt_token": token})
-        invalid_msg = ws.receive_json()
+        invalid_msg = _recv(ws)
         assert invalid_msg["type"] == "invalid_move"
         assert invalid_msg["reason"]
 
@@ -177,13 +210,13 @@ def test_websocket_survives_malformed_messages(tmp_path, monkeypatch):
             "move_uci": _solution_for(puzzle_msg["puzzle_id"]), "time_to_move": 4.0,
             "attempt_token": token,
         })
-        update_msg = ws.receive_json()
+        update_msg = _recv(ws)
         assert update_msg["type"] == "update"
         assert update_msg["correct"] is True
         assert update_msg["predicted_state"] in STATES
 
         # Connection is still alive and still serving puzzles afterward.
-        next_puzzle = ws.receive_json()
+        next_puzzle = _recv(ws)
         assert next_puzzle["type"] == "puzzle"
 
 def test_illegal_move_does_not_advance_or_score(tmp_path, monkeypatch):
@@ -191,7 +224,7 @@ def test_illegal_move_does_not_advance_or_score(tmp_path, monkeypatch):
 
     client = TestClient(server_module.app)
     with client.websocket_connect("/ws/session") as ws:
-        puzzle_msg = ws.receive_json()
+        puzzle_msg = _recv(ws)
         session_id = puzzle_msg["session_id"]
 
         # Deterministically illegal regardless of which puzzle was served: find a
@@ -205,7 +238,7 @@ def test_illegal_move_does_not_advance_or_score(tmp_path, monkeypatch):
             "move_uci": f"{empty_name}{destination}", "time_to_move": 1.0,
             "attempt_token": puzzle_msg["attempt_token"],
         })
-        msg = ws.receive_json()
+        msg = _recv(ws)
         assert msg["type"] == "invalid_move"
         assert "no piece" in msg["reason"].lower()
 
@@ -219,12 +252,12 @@ def test_hint_returns_legal_targets_for_selected_square(tmp_path, monkeypatch):
 
     client = TestClient(server_module.app)
     with client.websocket_connect("/ws/session") as ws:
-        puzzle_msg = ws.receive_json()
+        puzzle_msg = _recv(ws)
         solution = _solution_for(puzzle_msg["puzzle_id"])
         from_square = solution[:2]
 
         ws.send_json({"type": "hint", "square": from_square})
-        hint_msg = ws.receive_json()
+        hint_msg = _recv(ws)
         assert hint_msg["type"] == "hint"
         assert hint_msg["square"] == from_square
         # The solution's destination must always be among the legal targets for its
@@ -236,9 +269,9 @@ def test_hint_for_empty_square_returns_no_targets(tmp_path, monkeypatch):
 
     client = TestClient(server_module.app)
     with client.websocket_connect("/ws/session") as ws:
-        ws.receive_json()  # puzzle
+        _recv(ws)  # puzzle
         ws.send_json({"type": "hint", "square": "z9"})
-        hint_msg = ws.receive_json()
+        hint_msg = _recv(ws)
         assert hint_msg["type"] == "hint"
         assert hint_msg["targets"] == []
 
@@ -247,9 +280,9 @@ def test_check_move_explains_an_illegal_move_without_scoring(tmp_path, monkeypat
 
     client = TestClient(server_module.app)
     with client.websocket_connect("/ws/session") as ws:
-        puzzle_msg = ws.receive_json()
+        puzzle_msg = _recv(ws)
         ws.send_json({"type": "check_move", "move_uci": "a1a1"})
-        msg = ws.receive_json()
+        msg = _recv(ws)
         assert msg["type"] == "invalid_move"
         assert isinstance(msg["reason"], str) and len(msg["reason"]) > 0
 
@@ -265,14 +298,14 @@ def test_multi_move_puzzle_auto_plays_opponent_and_continues(tmp_path, monkeypat
 
     client = TestClient(server_module.app)
     with client.websocket_connect("/ws/session") as ws:
-        puzzle_msg = ws.receive_json()
+        puzzle_msg = _recv(ws)
         assert puzzle_msg["puzzle_id"] == "mm01"
         assert puzzle_msg["solver_color"] == "white"
 
         ws.send_json({
             "move_uci": "a1a8", "time_to_move": 2.0, "attempt_token": puzzle_msg["attempt_token"],
         })
-        update_msg = ws.receive_json()
+        update_msg = _recv(ws)
         assert update_msg["type"] == "update"
         assert update_msg["status"] == "continue"
         assert update_msg["correct"] is True
@@ -280,7 +313,7 @@ def test_multi_move_puzzle_auto_plays_opponent_and_continues(tmp_path, monkeypat
 
         # Same puzzle continues: puzzle_id unchanged, board reflects the opponent's
         # auto-played reply (the h7 pawn has moved to h6), fresh attempt_token.
-        next_msg = ws.receive_json()
+        next_msg = _recv(ws)
         assert next_msg["type"] == "puzzle"
         assert next_msg["puzzle_id"] == "mm01"
         assert next_msg["attempt_token"] != puzzle_msg["attempt_token"]
@@ -291,13 +324,13 @@ def test_multi_move_puzzle_auto_plays_opponent_and_continues(tmp_path, monkeypat
         ws.send_json({
             "move_uci": "a8d8", "time_to_move": 2.0, "attempt_token": next_msg["attempt_token"],
         })
-        final_update = ws.receive_json()
+        final_update = _recv(ws)
         assert final_update["type"] == "update"
         assert final_update["status"] == "solved"
         assert final_update["correct"] is True
         assert final_update["opponent_move"] is None
 
-        brand_new_puzzle = ws.receive_json()
+        brand_new_puzzle = _recv(ws)
         assert brand_new_puzzle["type"] == "puzzle"
 
 def test_wrong_legal_move_resets_puzzle_for_retry(tmp_path, monkeypatch):
@@ -305,7 +338,7 @@ def test_wrong_legal_move_resets_puzzle_for_retry(tmp_path, monkeypatch):
 
     client = TestClient(server_module.app)
     with client.websocket_connect("/ws/session") as ws:
-        puzzle_msg = ws.receive_json()
+        puzzle_msg = _recv(ws)
         solution = _solution_for(puzzle_msg["puzzle_id"])
         board = chess.Board(puzzle_msg["fen"])
         wrong_move = next(m.uci() for m in board.legal_moves if m.uci() != solution)
@@ -313,12 +346,12 @@ def test_wrong_legal_move_resets_puzzle_for_retry(tmp_path, monkeypatch):
         ws.send_json({
             "move_uci": wrong_move, "time_to_move": 2.0, "attempt_token": puzzle_msg["attempt_token"],
         })
-        update_msg = ws.receive_json()
+        update_msg = _recv(ws)
         assert update_msg["type"] == "update"
         assert update_msg["status"] == "retry"
         assert update_msg["correct"] is False
 
-        retry_puzzle = ws.receive_json()
+        retry_puzzle = _recv(ws)
         assert retry_puzzle["type"] == "puzzle"
         assert retry_puzzle["puzzle_id"] == puzzle_msg["puzzle_id"]
         assert retry_puzzle["fen"] == puzzle_msg["fen"]  # reset to the original position
@@ -328,7 +361,7 @@ def test_wrong_legal_move_resets_puzzle_for_retry(tmp_path, monkeypatch):
         ws.send_json({
             "move_uci": solution, "time_to_move": 2.0, "attempt_token": retry_puzzle["attempt_token"],
         })
-        final_update = ws.receive_json()
+        final_update = _recv(ws)
         assert final_update["type"] == "update"
         assert final_update["correct"] is True
 
@@ -341,14 +374,14 @@ def test_solver_color_reported_for_black_to_move_puzzle(tmp_path, monkeypatch):
 
     client = TestClient(server_module.app)
     with client.websocket_connect("/ws/session") as ws:
-        puzzle_msg = ws.receive_json()
+        puzzle_msg = _recv(ws)
         assert puzzle_msg["solver_color"] == "black"
 
         # "Own" pieces for this puzzle are the lowercase (Black) ones — legal_targets
         # for the black king's square must be non-empty, confirming turn/color handling
         # is consistent end to end, not just in the reported label.
         ws.send_json({"type": "hint", "square": "e8"})
-        hint_msg = ws.receive_json()
+        hint_msg = _recv(ws)
         assert hint_msg["targets"] == ["d7", "d8", "e7", "f7", "f8"]
 
 def test_missing_checkpoint_reports_error_instead_of_hanging(tmp_path, monkeypatch):
@@ -357,7 +390,7 @@ def test_missing_checkpoint_reports_error_instead_of_hanging(tmp_path, monkeypat
 
     client = TestClient(server_module.app)
     with client.websocket_connect("/ws/session") as ws:
-        msg = ws.receive_json()
+        msg = _recv(ws)
         assert msg["type"] == "error"
         assert "checkpoint not found" in msg["message"].lower()
 
