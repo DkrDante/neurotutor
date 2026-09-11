@@ -7,16 +7,25 @@
 </head>
 <body>
   <h1>NeuroTutor</h1>
-  <div id="board"></div>
+  <div id="board-area">
+    <span id="ranks"></span>
+    <div id="board"></div>
+  </div>
+  <span id="files"></span>
   <div id="status">
-    <div>State: <span id="state">-</span> (confidence <span id="confidence">-</span>)</div>
+    <div>
+      State: <span id="state">-</span>
+      (confidence <span id="confidence">-</span>
+      <span id="confidence-bar"><span id="confidence-fill"></span></span>)
+    </div>
     <div>Difficulty: <span id="difficulty">-</span></div>
-    <div id="hint" hidden>Hint: overloaded/confused detected — take your time and re-scan the board.</div>
+    <div id="hint" hidden></div>
     <div id="feedback"></div>
   </div>
   <p>Click a piece's square, then click the destination square to move.
   Click the same square again to deselect.</p>
   <button id="summary-button" type="button">Show Summary</button>
+  <button id="flip-button" type="button">Flip Board</button>
   <div id="summary"></div>
   <script src="/static/app.js"></script>
 </body>
