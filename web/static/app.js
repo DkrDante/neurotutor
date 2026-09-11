@@ -1,14 +1,16 @@
-const PIECE_UNICODE = {
-  K: "♔", Q: "♕", R: "♖", B: "♗", N: "♘", P: "♙",
-  k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟",
-};
+// Solid glyphs only (both colors use the "black" unicode variants) — see style.css's
+// .piece-white / .piece-black for how the two are told apart visually. Unicode's
+// separate "white" glyphs render as hollow outlines in most fonts, which doesn't
+// take a fill color well; using one solid glyph set per piece type is more reliable.
+const PIECE_GLYPH = { k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟" };
 
-const HINT_MESSAGES = {
-  Overloaded: "Hint: you look overloaded — slow down and re-scan the whole board before moving.",
-  Confused: "Hint: look for checks, captures, and threats one at a time.",
-  Fatigued: "Hint: fatigue detected — a short breather might help before the next puzzle.",
+const STATE_HINT_MESSAGES = {
+  Overloaded: "You look overloaded — slow down and re-scan the whole board before moving.",
+  Confused: "Look for checks, captures, and threats one at a time.",
+  Fatigued: "Fatigue detected — a short breather might help before the next puzzle.",
 };
-const DEFAULT_HINT_MESSAGE = "Hint: take your time and re-check the position.";
+const DEFAULT_HINT_MESSAGE = "Take your time and re-check the position.";
+const KNOWN_STATES = ["Focused", "Overloaded", "Confused", "Fatigued", "Engaged"];
 
 function parseFen(fen) {
   const board = [];
@@ -40,6 +42,7 @@ function squareToIndices(square) {
 }
 
 let selectedSquare = null;
+let legalTargets = [];
 let attemptStartMs = null;
 let ws = null;
 let sessionId = null;
@@ -49,14 +52,24 @@ let boardLocked = false;
 let currentFen = null;
 let currentBoard = null;
 let boardFlipped = false;
+let lastMove = null; // {from, to} of the most recently submitted move, for highlighting
+
+function pieceAt(square) {
+  if (!currentBoard) return null;
+  const [rankIdx, fileIdx] = squareToIndices(square);
+  return currentBoard[rankIdx][fileIdx];
+}
+
+function isOwnPiece(piece) {
+  // Every puzzle in this build is White-to-move, so "own" pieces are the uppercase ones.
+  return !!piece && piece === piece.toUpperCase();
+}
 
 function clearSelection() {
   selectedSquare = null;
-  document.querySelectorAll(".square.selected").forEach((el) => el.classList.remove("selected"));
+  legalTargets = [];
 }
 
-// Renders the current board state without touching per-puzzle bookkeeping (selection,
-// attempt timer, lock) — used both for a fresh puzzle and for a pure flip-orientation redraw.
 function drawBoard() {
   currentBoard = parseFen(currentFen);
   const boardEl = document.getElementById("board");
@@ -67,12 +80,24 @@ function drawBoard() {
       const f = boardFlipped ? 7 - displayCol : displayCol;
       const square = document.createElement("div");
       const name = squareName(r, f);
-      square.className = "square " + ((r + f) % 2 === 0 ? "light" : "dark");
-      square.dataset.square = name;
+      const classes = ["square", (r + f) % 2 === 0 ? "light" : "dark"];
+      if (name === selectedSquare) classes.push("selected");
+      if (lastMove && (name === lastMove.from || name === lastMove.to)) classes.push("last-move");
       const piece = currentBoard[r][f];
-      if (piece) square.textContent = PIECE_UNICODE[piece];
-      if (name === selectedSquare) square.classList.add("selected");
-      square.addEventListener("click", () => onSquareClick(name, square));
+      const isTarget = legalTargets.includes(name);
+      if (isTarget) {
+        classes.push("legal-target");
+        if (piece) classes.push("capture");
+      }
+      square.className = classes.join(" ");
+      square.dataset.square = name;
+      if (piece) {
+        const glyph = document.createElement("span");
+        glyph.className = "piece " + (isOwnPiece(piece) ? "piece-white" : "piece-black");
+        glyph.textContent = PIECE_GLYPH[piece.toLowerCase()];
+        square.appendChild(glyph);
+      }
+      square.addEventListener("click", () => onSquareClick(name));
       boardEl.appendChild(square);
     }
   }
@@ -100,11 +125,10 @@ function drawCoordinateLabels() {
 
 function renderBoard(fen) {
   currentFen = fen;
-  drawBoard();
+  lastMove = null;
   clearSelection();
+  drawBoard();
   attemptStartMs = performance.now();
-  // A new puzzle round has started: the board is playable again, and any move sent
-  // against the previous round's token is now stale and will be rejected server-side.
   boardLocked = false;
 }
 
@@ -113,33 +137,63 @@ function toggleFlip() {
   if (currentFen) drawBoard();
 }
 
-function onSquareClick(square, el) {
+function setCallout(el, text, variant) {
+  el.hidden = !text;
+  el.className = "callout" + (variant ? ` callout-${variant}` : "");
+  el.textContent = text || "";
+}
+
+function selectPiece(square) {
+  selectedSquare = square;
+  legalTargets = [];
+  drawBoard();
+  ws.send(JSON.stringify({ type: "hint", square }));
+}
+
+function onSquareClick(square) {
   if (boardLocked) return; // Waiting on the server (pacing delay / next puzzle).
+
   if (!selectedSquare) {
-    selectedSquare = square;
-    el.classList.add("selected");
+    const piece = pieceAt(square);
+    if (isOwnPiece(piece)) selectPiece(square);
     return;
   }
+
   if (square === selectedSquare) {
-    // Clicking the same square again means "deselect", not the null move a1a1.
     clearSelection();
+    drawBoard();
     return;
   }
-  let moveUci = selectedSquare + square;
-  const [rankIdx, fileIdx] = squareToIndices(selectedSquare);
-  const piece = currentBoard[rankIdx][fileIdx];
-  const destRank = square[1];
-  if ((piece === "P" && destRank === "8") || (piece === "p" && destRank === "1")) {
-    moveUci += "q"; // Auto-queen; the frontend has no promotion-choice UI.
+
+  if (legalTargets.includes(square)) {
+    let moveUci = selectedSquare + square;
+    const piece = pieceAt(selectedSquare);
+    const destRank = square[1];
+    if ((piece === "P" && destRank === "8")) {
+      moveUci += "q"; // Auto-queen; no promotion-choice UI.
+    }
+    const timeToMove = (performance.now() - attemptStartMs) / 1000.0;
+    setCallout(document.getElementById("feedback"), "", null);
+    ws.send(JSON.stringify({
+      move_uci: moveUci, time_to_move: timeToMove, attempt_token: currentAttemptToken,
+    }));
+    lastMove = { from: selectedSquare, to: square };
+    clearSelection();
+    boardLocked = true; // Locked until the next "puzzle" message arrives.
+    drawBoard();
+    return;
   }
-  const timeToMove = (performance.now() - attemptStartMs) / 1000.0;
-  ws.send(JSON.stringify({
-    move_uci: moveUci,
-    time_to_move: timeToMove,
-    attempt_token: currentAttemptToken,
-  }));
-  clearSelection();
-  boardLocked = true; // Locked until the next "puzzle" message arrives.
+
+  const otherPiece = pieceAt(square);
+  if (isOwnPiece(otherPiece)) {
+    selectPiece(square);
+    return;
+  }
+
+  // Not a legal destination for the selected piece: ask the server why, without
+  // scoring anything or losing the current selection/highlights.
+  const attemptedMove = selectedSquare + square;
+  ws.send(JSON.stringify({ type: "check_move", move_uci: attemptedMove }));
 }
 
 async function showSummary() {
@@ -153,52 +207,78 @@ async function showSummary() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const s = await response.json();
     summaryEl.textContent =
-      `Attempts: ${s.num_attempts} | Accuracy: ${(s.accuracy_rate * 100).toFixed(0)}% | ` +
-      `Avg latency: ${s.avg_latency.toFixed(3)}s | States: ${s.state_trend.join(", ") || "-"}`;
+      `Attempts: ${s.num_attempts} · Accuracy: ${(s.accuracy_rate * 100).toFixed(0)}% · ` +
+      `Avg latency: ${s.avg_latency.toFixed(3)}s · States: ${s.state_trend.join(", ") || "-"}`;
   } catch (err) {
     summaryEl.textContent = `Could not load summary: ${err.message}`;
   }
 }
 
+function setState(stateName) {
+  const badge = document.getElementById("state-badge");
+  badge.textContent = stateName;
+  badge.className = "badge " + (KNOWN_STATES.includes(stateName) ? `badge-${stateName}` : "badge-neutral");
+}
+
 function setConfidence(confidence) {
-  document.getElementById("confidence").textContent = confidence.toFixed(2);
-  const fillEl = document.getElementById("confidence-fill");
-  fillEl.style.width = `${Math.round(confidence * 100)}%`;
+  document.getElementById("confidence-value").textContent = confidence.toFixed(2);
+  document.getElementById("confidence-fill").style.width = `${Math.round(confidence * 100)}%`;
 }
 
 function connect() {
   ws = new WebSocket(`ws://${window.location.host}/ws/session`);
+  const feedbackEl = document.getElementById("feedback");
+  const hintBox = document.getElementById("hint-box");
+
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.session_id) sessionId = msg.session_id;
+
     if (msg.type === "puzzle") {
       currentAttemptToken = msg.attempt_token;
       renderBoard(msg.fen);
-      document.getElementById("feedback").textContent = "";
+      setCallout(feedbackEl, "", null);
+    } else if (msg.type === "hint") {
+      if (msg.square === selectedSquare) {
+        legalTargets = msg.targets;
+        drawBoard();
+      }
+    } else if (msg.type === "invalid_move") {
+      legalTargets = msg.targets || legalTargets;
+      setCallout(feedbackEl, `Invalid move — ${msg.reason}`, "invalid");
+      boardLocked = false; // A rejected move must not leave the board stuck.
+      drawBoard();
     } else if (msg.type === "update") {
-      document.getElementById("state").textContent = msg.predicted_state;
+      setState(msg.predicted_state);
       setConfidence(msg.confidence);
       document.getElementById("difficulty").textContent = msg.difficulty.toFixed(0);
-      const hintEl = document.getElementById("hint");
-      hintEl.hidden = !msg.action.show_hint;
       if (msg.action.show_hint) {
-        hintEl.textContent = HINT_MESSAGES[msg.predicted_state] || DEFAULT_HINT_MESSAGE;
+        hintBox.hidden = false;
+        document.getElementById("hint-text").textContent =
+          STATE_HINT_MESSAGES[msg.predicted_state] || DEFAULT_HINT_MESSAGE;
+      } else {
+        hintBox.hidden = true;
       }
-      document.getElementById("feedback").textContent = msg.correct ? "Correct!" : "Not quite — next puzzle incoming.";
+      setCallout(
+        feedbackEl,
+        msg.correct ? "Correct! Next puzzle incoming." : "Not quite — next puzzle incoming.",
+        msg.correct ? "correct" : "incorrect",
+      );
     } else if (msg.type === "error") {
       lastServerError = msg.message;
-      document.getElementById("feedback").textContent = msg.message;
-      boardLocked = false; // A rejected/malformed move must not leave the board stuck.
+      setCallout(feedbackEl, msg.message, "error");
+      boardLocked = false;
     }
   };
   ws.onerror = () => {
-    document.getElementById("feedback").textContent = "Connection error.";
+    setCallout(feedbackEl, "Connection error.", "error");
   };
   ws.onclose = () => {
-    // Keep a server-sent explanation visible rather than replacing it with a generic notice.
-    document.getElementById("feedback").textContent = lastServerError
-      ? `${lastServerError} (connection closed)`
-      : "Connection closed.";
+    setCallout(
+      feedbackEl,
+      lastServerError ? `${lastServerError} (connection closed)` : "Connection closed.",
+      "error",
+    );
   };
 }
 

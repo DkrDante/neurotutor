@@ -2,31 +2,73 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NeuroTutor — Chess Pilot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <h1>NeuroTutor</h1>
-  <div id="board-area">
-    <span id="ranks"></span>
-    <div id="board"></div>
+  <div class="page">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">♞</span>
+        <div>
+          <h1>NeuroTutor</h1>
+          <p class="tagline">Cognitive-state-aware chess tutoring</p>
+        </div>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="board-card">
+        <div class="board-frame">
+          <div id="board-area">
+            <div id="ranks"></div>
+            <div id="board"></div>
+          </div>
+          <div id="files"></div>
+        </div>
+        <p class="hint-text">Click a piece, then click a highlighted square to move.
+          Click the same square again to deselect.</p>
+      </section>
+
+      <aside class="status-card">
+        <div class="status-row">
+          <span class="label">Cognitive state</span>
+          <span id="state-badge" class="badge badge-neutral">—</span>
+        </div>
+
+        <div class="status-row">
+          <span class="label">Confidence</span>
+          <div class="confidence-wrap">
+            <div id="confidence-bar"><div id="confidence-fill"></div></div>
+            <span id="confidence-value">—</span>
+          </div>
+        </div>
+
+        <div class="status-row">
+          <span class="label">Difficulty</span>
+          <span id="difficulty" class="badge badge-neutral">—</span>
+        </div>
+
+        <div id="hint-box" class="callout callout-hint" hidden>
+          <span class="callout-icon">💡</span>
+          <span id="hint-text"></span>
+        </div>
+
+        <div id="feedback" class="callout" hidden></div>
+
+        <div class="actions">
+          <button id="summary-button" type="button" class="btn btn-secondary">Session Summary</button>
+          <button id="flip-button" type="button" class="btn btn-secondary">Flip Board</button>
+        </div>
+
+        <div id="summary" class="summary-box"></div>
+      </aside>
+    </main>
   </div>
-  <span id="files"></span>
-  <div id="status">
-    <div>
-      State: <span id="state">-</span>
-      (confidence <span id="confidence">-</span>
-      <span id="confidence-bar"><span id="confidence-fill"></span></span>)
-    </div>
-    <div>Difficulty: <span id="difficulty">-</span></div>
-    <div id="hint" hidden></div>
-    <div id="feedback"></div>
-  </div>
-  <p>Click a piece's square, then click the destination square to move.
-  Click the same square again to deselect.</p>
-  <button id="summary-button" type="button">Show Summary</button>
-  <button id="flip-button" type="button">Flip Board</button>
-  <div id="summary"></div>
   <script src="/static/app.js"></script>
 </body>
 </html>
