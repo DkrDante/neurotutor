@@ -67,6 +67,21 @@
 
         <div id="summary" class="summary-box"></div>
       </aside>
+
+      <section class="network-card">
+        <h2 class="panel-title">Network Activity <span class="panel-subtitle">— live model internals, not decorative</span></h2>
+
+        <div class="network-row">
+          <div class="eeg-wave-wrap">
+            <p class="mini-label">EEG stream (8 channels)</p>
+            <canvas id="eeg-canvas" width="480" height="120"></canvas>
+          </div>
+        </div>
+
+        <div class="network-row">
+          <svg id="network-svg" viewBox="0 0 620 300" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
+      </section>
     </main>
   </div>
   <script src="/static/app.js"></script>

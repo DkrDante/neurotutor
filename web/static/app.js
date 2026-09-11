@@ -218,6 +218,240 @@ async function showSummary() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Network Activity: a live visualization of the actual fusion model's forward
+// pass, driven entirely by real values from server "update" messages'
+// network_activity field (model.inference.StatePredictor.predict_with_internals) —
+// nothing here is a canned animation. Diagram built once on first data (the GCN
+// channel-adjacency weights are a fixed trained parameter, not per-prediction),
+// then only node/edge visual attributes update afterward.
+// ---------------------------------------------------------------------------
+
+const NUM_EEG_NODES = 8;
+const SVG_NS = "http://www.w3.org/2000/svg";
+const NET = {
+  eegCenter: { x: 90, y: 150 }, eegRadius: 60,
+  eegEmbed: { x: 210, y: 150 },
+  behaviorBars: { x0: 270, y: 90, w: 14, gap: 10, maxHeight: 50, baseline: 150 },
+  behaviorEmbed: { x: 340, y: 150 },
+  fusion: { x: 430, y: 150 },
+  lstm: { x: 510, y: 150 },
+  outputs: { x: 610, y0: 40, spacing: 55 },
+};
+const VIEWBOX_WIDTH = 800; // must stay wide enough that output-node labels (x + ~80px) don't get clipped
+
+let networkBuilt = false;
+
+function svgEl(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+  return el;
+}
+
+function eegNodePosition(i) {
+  const angle = (-90 + i * (360 / NUM_EEG_NODES)) * (Math.PI / 180);
+  return {
+    x: NET.eegCenter.x + NET.eegRadius * Math.cos(angle),
+    y: NET.eegCenter.y + NET.eegRadius * Math.sin(angle),
+  };
+}
+
+function buildNetworkDiagram(activity) {
+  const svg = document.getElementById("network-svg");
+  svg.setAttribute("viewBox", `0 0 ${VIEWBOX_WIDTH} 300`);
+  svg.innerHTML = "";
+
+  const edgesGroup = svgEl("g", { id: "gcn-edges" });
+  svg.appendChild(edgesGroup);
+  // The adjacency matrix is a fixed, learned parameter (same every prediction) —
+  // draw it once now. Only edges clearly above a uniform baseline are shown, so
+  // the diagram reads as "what the model actually learned to connect" rather
+  // than a dense, unreadable mesh of all 28 channel pairs.
+  const threshold = 1 / NUM_EEG_NODES;
+  const adjacency = activity.gcn_adjacency;
+  for (let i = 0; i < NUM_EEG_NODES; i++) {
+    for (let j = i + 1; j < NUM_EEG_NODES; j++) {
+      const weight = Math.max(adjacency[i][j], adjacency[j][i]);
+      if (weight <= threshold) continue;
+      const a = eegNodePosition(i), b = eegNodePosition(j);
+      edgesGroup.appendChild(svgEl("line", {
+        class: "net-edge", x1: a.x, y1: a.y, x2: b.x, y2: b.y,
+        "stroke-width": 1 + weight * 3, "stroke-opacity": Math.min(1, weight * 2.5),
+      }));
+    }
+  }
+
+  const nodesGroup = svgEl("g", { id: "gcn-nodes" });
+  svg.appendChild(nodesGroup);
+  for (let i = 0; i < NUM_EEG_NODES; i++) {
+    const pos = eegNodePosition(i);
+    nodesGroup.appendChild(svgEl("circle", {
+      id: `gcn-node-${i}`, class: "net-node net-node-eeg", cx: pos.x, cy: pos.y, r: 10,
+    }));
+  }
+  svg.appendChild(svgEl("text", {
+    class: "net-label", x: NET.eegCenter.x, y: NET.eegCenter.y - NET.eegRadius - 14,
+  })).textContent = "EEG channels";
+
+  const flowEdge = (from, to) => svg.appendChild(svgEl("line", {
+    class: "net-edge net-edge-flow", x1: from.x, y1: from.y, x2: to.x, y2: to.y,
+    "stroke-width": 1.5, "stroke-opacity": 0.5,
+  }));
+  flowEdge({ x: NET.eegCenter.x + NET.eegRadius, y: NET.eegCenter.y }, NET.eegEmbed);
+  flowEdge(NET.eegEmbed, NET.fusion);
+  flowEdge(NET.behaviorEmbed, NET.fusion);
+  flowEdge(NET.fusion, NET.lstm);
+
+  svg.appendChild(svgEl("circle", {
+    id: "eeg-embed-node", class: "net-node net-node-embed", cx: NET.eegEmbed.x, cy: NET.eegEmbed.y, r: 18,
+  }));
+  svg.appendChild(svgEl("text", { class: "net-label", x: NET.eegEmbed.x, y: NET.eegEmbed.y + 32 })).textContent = "EEG embed";
+
+  const barsGroup = svgEl("g", { id: "behavior-bars" });
+  svg.appendChild(barsGroup);
+  // "correct / time-to-move / eval-loss / puzzle-rating" (the same 4 features
+  // data_gen.generate_dataset.behavior_to_vector produces) — a hover title per bar
+  // instead of always-on text labels, which collided at this width.
+  const behaviorLabels = ["correct", "time to move", "eval loss", "puzzle rating"];
+  const barsSpan = 4 * NET.behaviorBars.w + 3 * NET.behaviorBars.gap;
+  for (let i = 0; i < 4; i++) {
+    const x = NET.behaviorBars.x0 + i * (NET.behaviorBars.w + NET.behaviorBars.gap);
+    const bar = svgEl("rect", {
+      id: `behavior-bar-${i}`, class: "net-behavior-bar",
+      x, y: NET.behaviorBars.baseline, width: NET.behaviorBars.w, height: 0,
+    });
+    bar.appendChild(svgEl("title", {})).textContent = behaviorLabels[i];
+    barsGroup.appendChild(bar);
+  }
+  flowEdge({ x: NET.behaviorBars.x0 + barsSpan / 2, y: NET.behaviorBars.y }, NET.behaviorEmbed);
+  svg.appendChild(svgEl("circle", {
+    id: "behavior-embed-node", class: "net-node net-node-embed", cx: NET.behaviorEmbed.x, cy: NET.behaviorEmbed.y, r: 18,
+  }));
+  svg.appendChild(svgEl("text", { class: "net-label", x: NET.behaviorEmbed.x, y: NET.behaviorEmbed.y + 32 })).textContent = "Behavior";
+
+  svg.appendChild(svgEl("circle", {
+    id: "fusion-node", class: "net-node net-node-fusion", cx: NET.fusion.x, cy: NET.fusion.y, r: 20,
+  }));
+  svg.appendChild(svgEl("text", { class: "net-label", x: NET.fusion.x, y: NET.fusion.y + 34 })).textContent = "Fusion";
+
+  svg.appendChild(svgEl("circle", {
+    id: "lstm-node", class: "net-node net-node-lstm", cx: NET.lstm.x, cy: NET.lstm.y, r: 20,
+  }));
+  svg.appendChild(svgEl("text", { class: "net-label", x: NET.lstm.x, y: NET.lstm.y + 34 })).textContent = "LSTM";
+
+  KNOWN_STATES.forEach((state, i) => {
+    const y = NET.outputs.y0 + i * NET.outputs.spacing;
+    flowEdge(NET.lstm, { x: NET.outputs.x, y });
+    svg.appendChild(svgEl("circle", {
+      id: `output-node-${state}`, class: "net-node net-node-output", cx: NET.outputs.x, cy: y, r: 12,
+    }));
+    svg.appendChild(svgEl("text", {
+      // +30, not +20: the circle's radius can grow up to 20 (see updateNetworkDiagram's
+      // 8 + p*12 for p=1), which would otherwise sit under the label at a high-confidence
+      // prediction. Anchor is set via inline `style`, not the `text-anchor` attribute:
+      // the .net-label CSS class's own text-anchor:middle otherwise wins the cascade over
+      // a same-specificity presentation attribute, silently re-centering the label on x.
+      class: "net-label", x: NET.outputs.x + 30, y: y + 4, style: "text-anchor: start",
+    })).textContent = state;
+  });
+
+  networkBuilt = true;
+}
+
+// Real, unbounded magnitudes (vector norms) squashed into a [0,1]-ish display
+// range for opacity/sizing — the scale factor is chosen for visual range, not
+// a calibrated unit; relative differences between predictions are what matter.
+function squash(value, scale) {
+  return Math.tanh(Math.abs(value) / scale);
+}
+
+function updateNetworkDiagram(activity) {
+  if (!activity) return;
+  const svg = document.getElementById("network-svg");
+  if (!networkBuilt) buildNetworkDiagram(activity);
+
+  for (let i = 0; i < NUM_EEG_NODES; i++) {
+    const node = document.getElementById(`gcn-node-${i}`);
+    const level = squash(activity.gcn2_node_activity[i], 2);
+    node.setAttribute("r", 7 + level * 8);
+    node.setAttribute("fill-opacity", 0.35 + level * 0.65);
+  }
+
+  const eegLevel = squash(activity.eeg_embedding_norm, 2);
+  const eegEmbedNode = document.getElementById("eeg-embed-node");
+  eegEmbedNode.setAttribute("fill-opacity", 0.35 + eegLevel * 0.65);
+
+  activity.behavior_activity.forEach((value, i) => {
+    const bar = document.getElementById(`behavior-bar-${i}`);
+    const clamped = Math.max(0, Math.min(1, value));
+    const height = clamped * NET.behaviorBars.maxHeight;
+    bar.setAttribute("y", NET.behaviorBars.baseline - height);
+    bar.setAttribute("height", height);
+  });
+  const behaviorLevel = squash(activity.behavior_embedding_norm, 2);
+  document.getElementById("behavior-embed-node").setAttribute("fill-opacity", 0.35 + behaviorLevel * 0.65);
+
+  const lstmLevel = squash(activity.lstm_hidden_norm, 3);
+  document.getElementById("lstm-node").setAttribute("fill-opacity", 0.35 + lstmLevel * 0.65);
+  document.getElementById("fusion-node").setAttribute("fill-opacity", 0.35 + (eegLevel + behaviorLevel) / 2 * 0.65);
+
+  KNOWN_STATES.forEach((state) => {
+    const node = document.getElementById(`output-node-${state}`);
+    const p = activity.probs[state] || 0;
+    node.setAttribute("r", 8 + p * 12); // max r=20, well clear of the label at +30 (see buildNetworkDiagram)
+    node.setAttribute("fill-opacity", 0.3 + p * 0.7);
+    node.classList.toggle("predicted", state === activity.state);
+  });
+
+  svg.classList.remove("pulse");
+  void svg.offsetWidth; // force reflow so re-adding the class restarts the CSS animation
+  svg.classList.add("pulse");
+}
+
+// ---------------------------------------------------------------------------
+// Live EEG waveform: a real scrolling multi-channel strip chart fed by the
+// server's background stream_eeg() task — the actual streamed signal, not a
+// decorative loop.
+// ---------------------------------------------------------------------------
+
+const EEG_WINDOW = 160; // samples retained per channel (~1.25s at the simulator's 128Hz)
+const eegBuffers = Array.from({ length: NUM_EEG_NODES }, () => []);
+const EEG_CHANNEL_COLORS = ["#4a7c2f", "#b58863", "#3f7fbf", "#b91c1c", "#c2410c", "#6d28d9", "#0f766e", "#a16207"];
+
+function onEegChunk(msg) {
+  for (const row of msg.samples) {
+    for (let ch = 0; ch < NUM_EEG_NODES; ch++) {
+      const buf = eegBuffers[ch];
+      buf.push(row[ch]);
+      if (buf.length > EEG_WINDOW) buf.shift();
+    }
+  }
+  drawEegWaveform();
+}
+
+function drawEegWaveform() {
+  const canvas = document.getElementById("eeg-canvas");
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const bandHeight = h / NUM_EEG_NODES;
+
+  for (let ch = 0; ch < NUM_EEG_NODES; ch++) {
+    const buf = eegBuffers[ch];
+    if (buf.length < 2) continue;
+    const baseline = bandHeight * ch + bandHeight / 2;
+    ctx.beginPath();
+    ctx.strokeStyle = EEG_CHANNEL_COLORS[ch];
+    ctx.lineWidth = 1;
+    for (let i = 0; i < buf.length; i++) {
+      const x = (i / (EEG_WINDOW - 1)) * w;
+      const y = baseline - buf[i] * (bandHeight * 0.4);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+}
+
 function setState(stateName) {
   const badge = document.getElementById("state-badge");
   badge.textContent = stateName;
@@ -237,6 +471,11 @@ function connect() {
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.session_id) sessionId = msg.session_id;
+
+    if (msg.type === "eeg_chunk") {
+      onEegChunk(msg);
+      return; // high-frequency; skip the session_id bookkeeping below entirely
+    }
 
     if (msg.type === "puzzle") {
       currentAttemptToken = msg.attempt_token;
@@ -260,6 +499,7 @@ function connect() {
       setState(msg.predicted_state);
       setConfidence(msg.confidence);
       document.getElementById("difficulty").textContent = msg.difficulty.toFixed(0);
+      updateNetworkDiagram(msg.network_activity);
       if (msg.action.show_hint) {
         hintBox.hidden = false;
         document.getElementById("hint-text").textContent =

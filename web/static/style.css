@@ -191,3 +191,42 @@ body {
 @media (max-width: 620px) {
   .status-card { max-width: none; }
 }
+
+.network-card {
+  flex: 1 1 100%;
+  background: var(--card-bg);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 1.25rem;
+  box-shadow: 0 2px 10px rgba(20, 20, 20, 0.06);
+}
+.panel-title { margin: 0 0 0.75rem; font-size: 1rem; font-weight: 700; }
+.panel-subtitle { font-weight: 400; color: var(--muted); font-size: 0.8rem; }
+.network-row { margin-bottom: 0.75rem; }
+.network-row:last-child { margin-bottom: 0; }
+.mini-label { margin: 0 0 0.3rem; font-size: 0.75rem; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+
+#eeg-canvas {
+  width: 100%; max-width: 100%; height: 120px;
+  background: #16130f; border-radius: 8px; display: block;
+}
+
+#network-svg { width: 100%; height: auto; display: block; }
+.net-node { transition: r 0.2s ease, fill-opacity 0.2s ease; }
+.net-node-eeg { fill: #4a7c2f; }
+.net-node-embed { fill: #b58863; }
+.net-node-fusion { fill: #7a726a; }
+.net-node-lstm { fill: #4a3626; }
+.net-node-output { fill: #b58863; }
+.net-node-output.predicted { fill: #4a7c2f; }
+.net-edge { stroke: #b58863; transition: stroke-opacity 0.2s ease; }
+.net-edge-flow { stroke: #7a726a; }
+.net-label { font-size: 11px; fill: var(--muted); text-anchor: middle; }
+.net-behavior-bar { fill: #4a7c2f; transition: y 0.2s ease, height 0.2s ease; }
+
+@keyframes net-pulse {
+  0% { filter: drop-shadow(0 0 0 rgba(74, 124, 47, 0)); }
+  40% { filter: drop-shadow(0 0 6px rgba(74, 124, 47, 0.9)); }
+  100% { filter: drop-shadow(0 0 0 rgba(74, 124, 47, 0)); }
+}
+#network-svg.pulse .net-node { animation: net-pulse 0.6s ease-out; }
