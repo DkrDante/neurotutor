@@ -11,17 +11,21 @@ class FakeEvaluator(MoveEvaluator):
 
 def test_load_puzzles_from_csv():
     engine = PuzzleTaskEngine(evaluator=FakeEvaluator())
-    assert len(engine.puzzles) == 10
+    # 10 original hand-built mate-in-1 puzzles + a real sample pulled from the public
+    # Lichess puzzle database (single-move puzzles only, see chess_task/puzzle_data/).
+    assert len(engine.puzzles) > 300
 
 def test_get_puzzle_picks_nearest_rating():
     engine = PuzzleTaskEngine(evaluator=FakeEvaluator())
+    expected = min(engine.puzzles, key=lambda p: abs(p.rating - 1000))
     puzzle = engine.get_puzzle(difficulty=1000)
-    assert puzzle.puzzle_id == "rb03"  # rating 960, closest to 1000
+    assert puzzle.puzzle_id == expected.puzzle_id
 
 def test_get_puzzle_does_not_repeat_until_exhausted():
     engine = PuzzleTaskEngine(evaluator=FakeEvaluator())
-    seen = {engine.get_puzzle(1000).puzzle_id for _ in range(10)}
-    assert len(seen) == 10
+    total = len(engine.puzzles)
+    seen = {engine.get_puzzle(1000).puzzle_id for _ in range(total)}
+    assert len(seen) == total
 
 def test_submit_move_correct():
     engine = PuzzleTaskEngine(evaluator=FakeEvaluator())
