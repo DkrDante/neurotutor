@@ -99,18 +99,26 @@ body {
   background: rgba(220, 53, 69, 0.35);
 }
 
+/* A flex child with position:relative here would compete with the piece <span> for
+   flex layout space, distorting the circle into an oval — position:absolute takes it
+   out of flex flow entirely so it just centers on the square regardless of siblings. */
 .square.legal-target::after {
   content: "";
-  position: relative;
-  width: 20%; height: 20%;
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 22%; height: 22%;
+  transform: translate(-50%, -50%);
   border-radius: 50%;
-  background: rgba(20, 20, 20, 0.22);
+  background: rgba(20, 20, 20, 0.28);
   z-index: 2;
+  pointer-events: none;
 }
-.square.legal-target.capture::after {
-  width: 82%; height: 82%;
-  background: transparent;
-  border: 4px solid rgba(20, 20, 20, 0.28);
+/* Captures highlight the whole square instead of ringing the piece. */
+.square.legal-target.capture::after { content: none; }
+.square.legal-target.capture::before {
+  content: "";
+  position: absolute; inset: 0;
+  background: rgba(178, 34, 34, 0.28);
 }
 
 .piece {
