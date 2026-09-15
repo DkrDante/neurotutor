@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NeuroTutor — Calculations</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%232b2320'/%3E%3Ctext x='32' y='47' font-size='38' text-anchor='middle' fill='%23f0d9b5' font-family='Georgia,serif'%3E%E2%99%9E%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="page">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">&#9822;</span>
+        <div>
+          <h1>Calculations</h1>
+          <p class="tagline">Every formula behind the tutor's numbers, with this session's real values plugged in.</p>
+        </div>
+      </div>
+      <div class="header-status">
+        <a href="/" class="nav-link">&larr; Tutor</a>
+        <a href="/model-evidence" class="nav-link">Model Evidence</a>
+        <a href="/puzzles" class="nav-link">Puzzle Library</a>
+        <a href="/analytics" class="nav-link">Analytics</a>
+      </div>
+    </header>
+
+    <main class="analytics-layout">
+      <section class="board-card analytics-sessions-card">
+        <h2 class="panel-title">Sessions</h2>
+        <p class="mini-label" id="sessions-status">Loading…</p>
+        <ul id="session-list" class="session-list"></ul>
+      </section>
+
+      <section id="detail-section" class="analytics-detail" hidden>
+        <div class="network-card">
+          <h2 class="panel-title">How the model &amp; policies work</h2>
+          <p class="mini-label">Formula reference — the same math for every session</p>
+          <ul id="formula-list" class="calculations-list"></ul>
+        </div>
+
+        <div class="network-card">
+          <h2 class="panel-title">This session's aggregate results <span class="panel-subtitle" id="detail-session-id"></span></h2>
+          <p class="mini-label">Real numbers substituted into each formula</p>
+          <ul id="aggregate-list" class="calc-trace-list"></ul>
+        </div>
+
+        <div class="network-card">
+          <h2 class="panel-title">Per-attempt trace</h2>
+          <p class="mini-label">Running accuracy and the difficulty walk, attempt by attempt</p>
+          <div class="calc-table-scroll">
+            <table class="calc-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Result</th>
+                  <th>State (confidence)</th>
+                  <th>Eval loss</th>
+                  <th>Difficulty walk</th>
+                  <th>Rule-based check</th>
+                  <th>Running accuracy</th>
+                </tr>
+              </thead>
+              <tbody id="trace-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="empty-state" class="board-card analytics-empty">
+        <p>Select a session on the left to see the calculations behind it.</p>
+      </section>
+    </main>
+  </div>
+  <script src="/static/calculations.js"></script>
+</body>
+</html>

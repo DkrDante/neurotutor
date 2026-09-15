@@ -41,17 +41,30 @@ def test_predict_with_internals_shapes_and_ranges(tmp_path: Path):
     assert len(result["gcn2_node_activity"]) == NUM_CHANNELS
     assert all(v >= 0.0 for v in result["gcn1_node_activity"])  # vector norms are non-negative
 
-    adjacency = result["gcn_adjacency"]
-    assert len(adjacency) == NUM_CHANNELS
-    assert all(len(row) == NUM_CHANNELS for row in adjacency)
-    for row in adjacency:
-        assert abs(sum(row) - 1.0) < 1e-4  # each row is a softmax over that node's neighbors
+    for key in ("gcn1_adjacency", "gcn2_adjacency"):
+        adjacency = result[key]
+        assert len(adjacency) == NUM_CHANNELS
+        assert all(len(row) == NUM_CHANNELS for row in adjacency)
+        for row in adjacency:
+            assert abs(sum(row) - 1.0) < 1e-4  # each row is a softmax over that node's neighbors
 
     assert result["eeg_embedding_norm"] >= 0.0
     assert result["behavior_embedding_norm"] >= 0.0
     assert result["lstm_hidden_norm"] >= 0.0
+    lstm_hidden_dim = len(result["lstm_hidden_activity"])
+    assert lstm_hidden_dim > 0
+    assert len(result["classifier_weight"]) == len(STATES)
+    assert all(len(row) == lstm_hidden_dim for row in result["classifier_weight"])
     assert len(result["behavior_activity"]) == NUM_BEHAVIOR_FEATS
     assert result["behavior_activity"] == [float(v) for v in behavior_seq[-1]]
+
+    hidden_dim = len(result["behavior_hidden_activity"])
+    output_dim = len(result["behavior_output_activity"])
+    assert hidden_dim > 0 and output_dim > 0
+    assert len(result["behavior_w1"]) == hidden_dim
+    assert all(len(row) == NUM_BEHAVIOR_FEATS for row in result["behavior_w1"])
+    assert len(result["behavior_w2"]) == output_dim
+    assert all(len(row) == hidden_dim for row in result["behavior_w2"])
 
 def test_predict_delegates_to_predict_with_internals(tmp_path: Path):
     """predict() must stay a thin wrapper — same state/confidence/probs either way."""

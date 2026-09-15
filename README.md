@@ -33,10 +33,16 @@ python -m data_gen.generate_dataset --out-dir data/synthetic --examples-per-stat
 ## Train the fusion classifier
 
 ```bash
-python -m model.train --data-dir data/synthetic --checkpoint-path model/checkpoints/best.pt
+python -m model.train --data-dir data/synthetic --checkpoint-path model/checkpoints/best.pt \
+    --seed 42 --save-history
 ```
 
-Prints validation/test accuracy and F1 once training completes.
+Prints validation/test accuracy and F1 once training completes. `--seed`
+makes the run reproducible (identical weights and metrics on a re-run with
+the same seed); `--save-history` writes per-epoch train loss / val
+accuracy / val F1 to `<checkpoint-path>.history.json`, which `/model-evidence`
+renders as training curves. Both are optional — omit them for the old
+non-deterministic, no-history behavior.
 
 ## Run the tutor
 
@@ -47,6 +53,32 @@ uvicorn web.server:app --reload
 Open `http://localhost:8000`, click a piece's square then a destination
 square to move. The live predicted cognitive state, confidence, and
 adaptive difficulty update after each attempt.
+
+Four more pages, linked from the header, show their work rather than
+asking you to trust the numbers:
+
+- `/calculations` — every formula behind a session's numbers, with that
+  session's real values substituted in, plus a per-attempt trace flagging
+  where the RL policy diverged from the rule-based reconstruction.
+- `/model-evidence` — the trained checkpoint's real weights, its training
+  curves (if trained with `--save-history`), an independently-computed
+  precision/recall/F1/ROC-AUC evaluation, a comparison against classical
+  baselines (majority-class, logistic regression), permutation feature
+  importance (behavior features and individual EEG channels), and a live,
+  re-runnable forward-pass trace (including both GCN layers' learned
+  channel-adjacency, rendered as an actual graph). `python -m
+  model.evaluate_model` generates the same report offline to
+  `model/MODEL_EVIDENCE.md`.
+- `/puzzles` — the full curated puzzle set PuzzleTaskEngine draws from,
+  browsable and filterable by rating/source/mate-pattern, read live from
+  `chess_task/puzzle_data/sample_puzzles.csv`. Mate patterns (back-rank,
+  smothered, discovered/double check, mating piece) are classified for real
+  by replaying each puzzle's actual final move on a `python-chess` board
+  (`chess_task/motifs.py`), not looked up from a tag list.
+- `/analytics` — per-session charts plus a cohort overview aggregated
+  across every recorded session (accuracy, latency, cognitive-state
+  distribution, engagement trend, rule-vs-RL divergence rate), with CSV
+  export.
 
 ## Run the tests
 
@@ -97,6 +129,18 @@ Two takeaways, and both matter for how to read this pilot's results:
 
 No claims about the value of sensor fusion should be drawn from headline
 accuracy alone on this dataset — always check the ablation table above it.
+
+Note: the table above is from this separate ablation run, not the
+checkpoint the running app actually serves (`model/checkpoints/best.pt`,
+trained with a fixed `--seed` for reproducibility). `/model-evidence`
+independently evaluates that real production checkpoint and reports 98.0%
+accuracy / 0.98 macro F1 / 1.0 macro ROC-AUC — a different, still strong
+result, which is itself a small piece of evidence against "hardcoded" (a
+faked number wouldn't vary between training runs). The same page also
+scores two classical baselines on the identical split for comparison: a
+majority-class guess (22.0%) and logistic regression on behavior features
+alone (74.0%) — the fused model's improvement over both is large, not
+marginal.
 
 ## Scope of this build
 

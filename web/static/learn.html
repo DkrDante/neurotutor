@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NeuroTutor — Learn to Play</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%232b2320'/%3E%3Ctext x='32' y='47' font-size='38' text-anchor='middle' fill='%23f0d9b5' font-family='Georgia,serif'%3E%E2%99%9E%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="page">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">♞</span>
+        <div>
+          <h1>Learn to Play</h1>
+          <p class="tagline">A gentle, hands-on introduction to chess</p>
+        </div>
+      </div>
+      <div class="header-status">
+        <a href="/" class="nav-link">&larr; Back to Tutor</a>
+      </div>
+    </header>
+
+    <main class="learn-layout">
+      <ol id="learn-progress" class="learn-progress" aria-label="Tutorial progress"></ol>
+
+      <section class="board-card learn-stage">
+        <div id="learn-content" class="learn-content"></div>
+
+        <div class="learn-board-row">
+          <div class="board-frame learn-board-frame">
+            <div id="learn-board" class="learn-board" role="grid" aria-label="Practice chess board"></div>
+          </div>
+          <div id="learn-feedback" class="callout learn-feedback" role="status" aria-live="polite" hidden></div>
+        </div>
+
+        <div id="learn-more-wrap" class="learn-more-wrap" hidden>
+          <button id="learn-more-toggle" type="button" class="learn-more-toggle">Learn more &darr;</button>
+          <p id="learn-more-text" class="learn-more-text" hidden></p>
+        </div>
+      </section>
+
+      <div class="learn-nav">
+        <button id="learn-replay" type="button" class="btn btn-secondary" hidden>Replay this step</button>
+        <div class="learn-nav-main">
+          <button id="learn-back" type="button" class="btn btn-secondary">&larr; Back</button>
+          <button id="learn-next" type="button" class="btn btn-primary">Continue &rarr;</button>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="/static/learn.js"></script>
+</body>
+</html>

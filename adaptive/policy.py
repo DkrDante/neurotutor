@@ -10,5 +10,5 @@ class Action:
 
 class Policy(ABC):
     @abstractmethod
-    def decide(self, state: str, confidence: float) -> Action:
+    def decide(self, state: str, confidence: float, correct: bool) -> Action:
         raise NotImplementedError

@@ -27,6 +27,46 @@ def test_get_puzzle_does_not_repeat_until_exhausted():
     seen = {engine.get_puzzle(1000).puzzle_id for _ in range(total)}
     assert len(seen) == total
 
+def test_get_puzzle_respects_rating_band_for_targeted_practice():
+    engine = PuzzleTaskEngine(evaluator=FakeEvaluator())
+    for _ in range(20):
+        puzzle = engine.get_puzzle(difficulty=1000, rating_min=1800, rating_max=2199)
+        assert 1800 <= puzzle.rating <= 2199
+
+def test_get_puzzle_rating_band_falls_back_to_full_set_if_band_is_empty():
+    engine = PuzzleTaskEngine(evaluator=FakeEvaluator())
+    # No real puzzle is rated this high — the filter should fall back rather than raise.
+    puzzle = engine.get_puzzle(difficulty=1000, rating_min=9000, rating_max=9999)
+    assert puzzle is not None
+
+def test_get_puzzle_without_rating_band_is_unaffected():
+    engine = PuzzleTaskEngine(evaluator=FakeEvaluator())
+    expected = min(engine.puzzles, key=lambda p: abs(p.rating - 1000))
+    puzzle = engine.get_puzzle(difficulty=1000, rating_min=None, rating_max=None)
+    assert puzzle.puzzle_id == expected.puzzle_id
+
+def test_already_served_seed_prevents_an_immediate_repeat_on_reconnect():
+    # A fresh PuzzleTaskEngine (one per websocket connection) with no seeding
+    # would hand back the exact same nearest-rated puzzle on every reconnect
+    # at the same difficulty — this is what a returning learner's persisted
+    # profile (storage.db's served_puzzle_ids) is seeded in to prevent.
+    plain_engine = PuzzleTaskEngine(evaluator=FakeEvaluator())
+    first_puzzle = plain_engine.get_puzzle(difficulty=1000)
+
+    reconnected_engine = PuzzleTaskEngine(evaluator=FakeEvaluator(), already_served={first_puzzle.puzzle_id})
+    second_puzzle = reconnected_engine.get_puzzle(difficulty=1000)
+
+    assert second_puzzle.puzzle_id != first_puzzle.puzzle_id
+
+def test_served_puzzle_ids_property_exposes_seeded_and_newly_served_ids():
+    engine = PuzzleTaskEngine(evaluator=FakeEvaluator(), already_served={"pre-existing"})
+    served_before = engine.served_puzzle_ids
+    assert "pre-existing" in served_before
+
+    newly_served = engine.get_puzzle(difficulty=1000)
+    assert newly_served.puzzle_id in engine.served_puzzle_ids
+    assert "pre-existing" in engine.served_puzzle_ids
+
 def test_submit_move_correct():
     engine = PuzzleTaskEngine(evaluator=FakeEvaluator())
     puzzle = Puzzle(puzzle_id="rb01", fen="2k5/1ppp4/8/8/8/8/8/R6K w - - 0 1", solution_move="a1a8", rating=700)

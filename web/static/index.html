@@ -4,12 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NeuroTutor — Chess Pilot</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%232b2320'/%3E%3Ctext x='32' y='47' font-size='38' text-anchor='middle' fill='%23f0d9b5' font-family='Georgia,serif'%3E%E2%99%9E%3C/text%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="spinner"></div>
+    <p>Connecting to tutor session…</p>
+  </div>
+
   <div class="page">
     <header class="app-header">
       <div class="brand">
@@ -19,67 +25,248 @@
           <p class="tagline">Cognitive-state-aware chess tutoring</p>
         </div>
       </div>
+      <div class="header-status">
+        <a href="/learn" class="nav-link">Learn to Play &rarr;</a>
+        <a href="/calculations" target="_blank" rel="noopener" class="nav-link">Calculations &rarr;</a>
+        <a href="/model-evidence" target="_blank" rel="noopener" class="nav-link">Model Evidence &rarr;</a>
+        <a href="/puzzles" target="_blank" rel="noopener" class="nav-link">Puzzle Library &rarr;</a>
+        <a href="/analytics" class="nav-link">Analytics &rarr;</a>
+        <span id="connection-dot" class="connection-dot"></span>
+        <span id="connection-label">Connecting…</span>
+      </div>
+      <div class="account-controls">
+        <button id="leaderboard-button" type="button" class="btn btn-secondary account-btn">Leaderboard</button>
+        <span class="account-name-streak">
+          <span id="account-status" class="account-status"></span>
+          <span id="daily-streak-inline" class="daily-streak-inline"></span>
+        </span>
+        <button id="account-button" type="button" class="btn btn-secondary account-btn">Log in</button>
+      </div>
     </header>
 
-    <main class="layout">
-      <section class="board-card">
-        <div class="board-frame">
-          <div id="board-area">
-            <div id="ranks"></div>
-            <div id="board"></div>
+    <div id="account-dialog" class="modal-overlay" hidden>
+      <div class="modal-card account-dialog">
+        <form class="account-form" onsubmit="return false;">
+          <div class="account-dialog-header">
+            <h2 class="panel-title">Account</h2>
+            <button id="account-dialog-close" type="button" class="icon-btn" aria-label="Close">&times;</button>
           </div>
-          <div id="files"></div>
-        </div>
-        <p class="hint-text">Click a piece, then click a highlighted square to move.
-          Click the same square again to deselect.</p>
-      </section>
+          <p class="hint-text">
+            Log in to keep your XP, achievements, and daily streak across devices — or sign up
+            to save the progress you've already made in this browser.
+          </p>
+          <label class="account-field">
+            <span class="mini-label">Username</span>
+            <input id="account-username" type="text" autocomplete="username" maxlength="32">
+          </label>
+          <label class="account-field">
+            <span class="mini-label">Password</span>
+            <input id="account-password" type="password" autocomplete="current-password" maxlength="128">
+          </label>
+          <p id="account-error" class="account-error" role="alert"></p>
+          <div class="actions account-dialog-actions">
+            <button id="account-login-button" type="button" class="btn btn-secondary">Log in</button>
+            <button id="account-signup-button" type="button" class="btn btn-secondary">Sign up</button>
+          </div>
+        </form>
+      </div>
+    </div>
 
-      <aside class="status-card">
-        <div class="status-row">
-          <span class="label">Cognitive state</span>
-          <span id="state-badge" class="badge badge-neutral">—</span>
+    <div id="leaderboard-dialog" class="modal-overlay" hidden>
+      <div class="modal-card account-dialog leaderboard-dialog">
+        <div class="account-dialog-header">
+          <h2 class="panel-title">Leaderboard <span class="panel-subtitle" id="leaderboard-your-rank"></span></h2>
+          <button id="leaderboard-dialog-close" type="button" class="icon-btn" aria-label="Close">&times;</button>
         </div>
+        <p class="mini-label" id="leaderboard-status">Loading…</p>
+        <ol id="leaderboard-list" class="leaderboard-list"></ol>
+      </div>
+    </div>
 
-        <div class="status-row">
-          <span class="label">Confidence</span>
-          <div class="confidence-wrap">
-            <div id="confidence-bar"><div id="confidence-fill"></div></div>
-            <span id="confidence-value">—</span>
+    <main class="page-body">
+      <div id="onboarding-banner" class="onboarding-banner" hidden>
+        <span>New to chess? Learn how every piece moves with our short interactive tutorial.</span>
+        <div class="onboarding-banner-actions">
+          <a href="/learn" class="btn btn-primary">Start tutorial</a>
+          <button id="onboarding-banner-dismiss" type="button" class="icon-btn" aria-label="Dismiss">&times;</button>
+        </div>
+      </div>
+
+      <div class="game-layout">
+        <div class="board-column">
+          <div class="board-hero">
+            <div class="mode-bar">
+              <div class="segmented-group">
+                <span class="segmented-caption">Mode</span>
+                <div class="segmented" data-select="mode-select">
+                  <button type="button" class="segmented-btn active" data-value="puzzle">Puzzle</button>
+                  <button type="button" class="segmented-btn" data-value="game">Full Game</button>
+                </div>
+              </div>
+              <div class="segmented-group">
+                <span class="segmented-caption">Adaptive policy</span>
+                <div class="segmented" data-select="policy-select">
+                  <button type="button" class="segmented-btn active" data-value="rule">Rule-based</button>
+                  <button type="button" class="segmented-btn" data-value="rl">RL</button>
+                </div>
+              </div>
+              <select id="mode-select" hidden aria-hidden="true">
+                <option value="puzzle">Puzzle</option>
+                <option value="game">Full Game</option>
+              </select>
+              <select id="policy-select" hidden aria-hidden="true">
+                <option value="rule">Rule-based</option>
+                <option value="rl">RL (Q-learning)</option>
+              </select>
+            </div>
+
+            <div class="puzzle-meta">
+              <span id="rating-badge" class="badge badge-rating">Rating <strong id="puzzle-rating">—</strong></span>
+              <span id="counter-badge" class="badge badge-neutral">Puzzle <strong id="puzzle-counter">0</strong></span>
+              <span id="streak-badge" class="badge badge-streak" hidden>Streak &times;<strong id="streak-count">0</strong></span>
+              <button id="sound-toggle" type="button" class="icon-btn" title="Toggle sound effects" aria-label="Toggle sound effects">Sound: On</button>
+            </div>
+
+            <section class="board-card">
+              <div id="captured-top" class="captured-row" aria-label="Pieces captured by Black"></div>
+
+              <div class="board-row">
+                <div class="board-frame">
+                  <div id="board-area">
+                    <div id="ranks"></div>
+                    <div id="board"></div>
+                  </div>
+                  <div id="files"></div>
+                </div>
+
+                <div class="eval-bar-wrap" title="Estimated win probability from the current position">
+                  <div id="eval-bar"><div id="eval-bar-white"></div></div>
+                  <span id="eval-label" class="eval-label">50%</span>
+                </div>
+              </div>
+
+              <div id="captured-bottom" class="captured-row" aria-label="Pieces captured by White"></div>
+            </section>
+
+            <div id="thinking-indicator" class="thinking-indicator" hidden>
+              <span class="thinking-dots"><span></span><span></span><span></span></span>
+              Opponent is thinking&hellip;
+            </div>
+
+            <div id="move-explain" class="move-explain" hidden>
+              <p class="mini-label">Last move <span id="move-explain-san" class="move-explain-san"></span></p>
+              <div id="move-explain-body" class="move-explain-body"></div>
+            </div>
+
+            <p class="hint-text">Click a piece, then click a highlighted square to move.
+              Click the same square again to deselect.</p>
           </div>
         </div>
 
-        <div class="status-row">
-          <span class="label">Difficulty</span>
-          <span id="difficulty" class="badge badge-neutral">—</span>
+        <aside class="sidebar-column">
+          <section class="status-card">
+            <div class="status-row">
+              <span class="label">Cognitive state</span>
+              <span id="state-badge" class="badge badge-neutral">—</span>
+            </div>
+
+            <div class="status-row">
+              <span class="label">Confidence</span>
+              <div class="confidence-wrap">
+                <div id="confidence-bar"><div id="confidence-fill"></div></div>
+                <span id="confidence-value">—</span>
+              </div>
+            </div>
+
+            <div class="status-row">
+              <span class="label">Difficulty</span>
+              <span id="difficulty" class="badge badge-neutral">—</span>
+            </div>
+
+            <div class="mascot-row">
+              <div id="mascot-avatar" class="mascot-avatar" aria-hidden="true">
+                <img src="/static/images/mascot.png" alt="" class="mascot-img">
+              </div>
+              <div class="mascot-speech">
+                <div id="hint-box" class="callout callout-hint" hidden>
+                  <span class="callout-label">Cognitive hint</span>
+                  <span id="hint-text"></span>
+                </div>
+
+                <div id="puzzle-hint-box" class="callout callout-hint" hidden>
+                  <span class="callout-label">Solution</span>
+                  <span id="puzzle-hint-text"></span>
+                </div>
+
+                <div id="feedback" class="callout" role="status" aria-live="polite" hidden></div>
+              </div>
+            </div>
+
+            <div class="actions">
+              <button id="hint-button" type="button" class="btn btn-secondary">Solution</button>
+              <button id="summary-button" type="button" class="btn btn-secondary">Session Summary</button>
+              <button id="flip-button" type="button" class="btn btn-secondary">Flip Board</button>
+            </div>
+
+            <div id="summary" class="summary-box"></div>
+          </section>
+
+          <section class="moves-card">
+            <div class="status-row">
+              <span class="label">Session</span>
+              <span class="stat-inline">Solved <strong id="solved-count">0</strong> &nbsp;·&nbsp; Best streak <strong id="best-streak">0</strong></span>
+            </div>
+            <p class="mini-label">Move list</p>
+            <ol id="move-list" class="move-list"></ol>
+          </section>
+
+          <section class="gamify-card">
+            <div class="status-row">
+              <span class="label">Level</span>
+              <span id="level-badge" class="badge badge-rating">1</span>
+            </div>
+            <div class="xp-wrap">
+              <div id="xp-bar"><div id="xp-fill"></div></div>
+              <span id="xp-value" class="stat-inline">0 / 100 XP</span>
+            </div>
+            <p class="mini-label">Board theme</p>
+            <div id="board-theme-list" class="theme-swatch-list"></div>
+            <p class="mini-label">Achievements <span id="achievement-count" class="panel-subtitle">0 / 51</span></p>
+            <ul id="achievement-list" class="achievement-list"></ul>
+          </section>
+        </aside>
+      </div>
+
+      <section class="network-section">
+        <div class="section-heading">
+          <h2>Network Activity</h2>
+          <p>Live model internals, not decorative — click any node or connection for its real current value and weights</p>
         </div>
 
-        <div id="hint-box" class="callout callout-hint" hidden>
-          <span class="callout-icon">💡</span>
-          <span id="hint-text"></span>
-        </div>
+        <div class="net-panels">
+          <div class="net-panel">
+            <p class="mini-label">Behavior neural network <span class="panel-subtitle">(no EEG)</span></p>
+            <svg id="behavior-nn-svg" viewBox="0 0 250 300" preserveAspectRatio="xMidYMid meet"></svg>
+          </div>
 
-        <div id="feedback" class="callout" hidden></div>
+          <div class="net-panel">
+            <p class="mini-label">EEG graph network</p>
+            <canvas id="eeg-canvas" width="260" height="90"></canvas>
+            <svg id="eeg-graph-svg" viewBox="0 0 240 340" preserveAspectRatio="xMidYMid meet"></svg>
+          </div>
 
-        <div class="actions">
-          <button id="summary-button" type="button" class="btn btn-secondary">Session Summary</button>
-          <button id="flip-button" type="button" class="btn btn-secondary">Flip Board</button>
-        </div>
-
-        <div id="summary" class="summary-box"></div>
-      </aside>
-
-      <section class="network-card">
-        <h2 class="panel-title">Network Activity <span class="panel-subtitle">— live model internals, not decorative</span></h2>
-
-        <div class="network-row">
-          <div class="eeg-wave-wrap">
-            <p class="mini-label">EEG stream (8 channels)</p>
-            <canvas id="eeg-canvas" width="480" height="120"></canvas>
+          <div class="net-panel">
+            <p class="mini-label">Fusion + LSTM</p>
+            <svg id="fusion-svg" viewBox="0 0 460 300" preserveAspectRatio="xMidYMid meet"></svg>
           </div>
         </div>
 
-        <div class="network-row">
-          <svg id="network-svg" viewBox="0 0 620 300" preserveAspectRatio="xMidYMid meet"></svg>
+        <div id="net-inspector" class="net-inspector" hidden>
+          <button type="button" id="net-inspector-close" class="net-inspector-close" aria-label="Close">&times;</button>
+          <p class="mini-label" id="net-inspector-kicker"></p>
+          <h3 id="net-inspector-title"></h3>
+          <p id="net-inspector-subtitle" class="net-inspector-subtitle"></p>
+          <ul id="net-inspector-rows" class="net-inspector-rows"></ul>
         </div>
       </section>
     </main>

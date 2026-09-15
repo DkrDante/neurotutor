@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NeuroTutor — Analytics</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%232b2320'/%3E%3Ctext x='32' y='47' font-size='38' text-anchor='middle' fill='%23f0d9b5' font-family='Georgia,serif'%3E%E2%99%9E%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="page">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">&#9822;</span>
+        <div>
+          <h1>Session Analytics</h1>
+          <p class="tagline">Real per-attempt data from storage.db — nothing on this page is simulated.</p>
+        </div>
+      </div>
+      <div class="header-status">
+        <a href="/" class="nav-link">&larr; Back to Tutor</a>
+        <a href="/calculations" target="_blank" rel="noopener" class="nav-link">Calculations &rarr;</a>
+        <a href="/model-evidence" target="_blank" rel="noopener" class="nav-link">Model Evidence &rarr;</a>
+        <a href="/puzzles" target="_blank" rel="noopener" class="nav-link">Puzzle Library &rarr;</a>
+      </div>
+    </header>
+
+    <section class="network-card">
+      <h2 class="panel-title">Cohort overview <span class="panel-subtitle">— every recorded session, not just one</span></h2>
+      <p class="mini-label">Puzzle and full-game sessions are kept separate throughout — full-game mode repurposes puzzle_rating to mean the live adaptive-difficulty number, so combining the two would silently blend two different signals.</p>
+
+      <h3 class="cohort-mode-heading">Puzzle mode</h3>
+      <p class="mini-label" id="aggregate-status-puzzle">Loading…</p>
+      <div class="stat-grid" id="aggregate-stat-grid-puzzle"></div>
+      <p class="mini-label" style="margin-top: 1rem;">Cognitive-state distribution across every puzzle-mode attempt</p>
+      <svg id="aggregate-state-chart-puzzle" class="chart-svg" viewBox="0 0 640 220" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="calc-table-scroll">
+        <table class="calc-table">
+          <thead><tr><th>State</th><th>Attempts</th><th>Accuracy</th><th>Avg confidence</th></tr></thead>
+          <tbody id="aggregate-state-body-puzzle"></tbody>
+        </table>
+      </div>
+      <p class="mini-label" style="margin-top: 1rem;">Rule-based vs. RL policy — puzzle-mode attempts only</p>
+      <svg id="policy-comparison-chart-puzzle" class="chart-svg" viewBox="0 0 640 90" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="stat-grid" id="policy-comparison-grid-puzzle"></div>
+
+      <h3 class="cohort-mode-heading">Full game mode</h3>
+      <p class="mini-label" id="aggregate-status-game">Loading…</p>
+      <div class="stat-grid" id="aggregate-stat-grid-game"></div>
+      <p class="mini-label" style="margin-top: 1rem;">Cognitive-state distribution across every full-game attempt</p>
+      <svg id="aggregate-state-chart-game" class="chart-svg" viewBox="0 0 640 220" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="calc-table-scroll">
+        <table class="calc-table">
+          <thead><tr><th>State</th><th>Attempts</th><th>Accuracy</th><th>Avg confidence</th></tr></thead>
+          <tbody id="aggregate-state-body-game"></tbody>
+        </table>
+      </div>
+      <p class="mini-label" style="margin-top: 1rem;">Rule-based vs. RL policy — full-game attempts only</p>
+      <svg id="policy-comparison-chart-game" class="chart-svg" viewBox="0 0 640 90" preserveAspectRatio="xMidYMid meet"></svg>
+      <div class="stat-grid" id="policy-comparison-grid-game"></div>
+
+      <p style="margin-top: 0.75rem;">
+        <a href="/sessions/export" class="btn btn-secondary">Export all sessions (CSV) &darr;</a>
+      </p>
+    </section>
+
+    <main class="analytics-layout">
+      <section class="board-card analytics-sessions-card">
+        <h2 class="panel-title">Sessions</h2>
+        <p class="mini-label" id="sessions-status">Loading…</p>
+        <ul id="session-list" class="session-list"></ul>
+      </section>
+
+      <section id="detail-section" class="analytics-detail" hidden>
+        <div class="network-card">
+          <h2 class="panel-title">Summary <span class="panel-subtitle" id="detail-session-id"></span></h2>
+          <div class="stat-grid" id="stat-grid"></div>
+          <p style="margin-top: 0.75rem;">
+            <a id="session-export-link" href="#" class="btn btn-secondary">Export this session (CSV) &darr;</a>
+          </p>
+        </div>
+
+        <div class="network-card">
+          <h2 class="panel-title">Coaching <span class="panel-subtitle" id="coaching-source"></span></h2>
+          <p id="coaching-narrative" class="summary-narrative" hidden></p>
+          <p class="mini-label">Where to improve</p>
+          <ul id="coaching-tips" class="coaching-tips"></ul>
+        </div>
+
+        <div class="network-card">
+          <h2 class="panel-title">Accuracy &amp; confidence over the session</h2>
+          <svg id="accuracy-chart" class="chart-svg" viewBox="0 0 640 220" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
+
+        <div class="network-card">
+          <h2 class="panel-title">Difficulty progression</h2>
+          <svg id="difficulty-chart" class="chart-svg" viewBox="0 0 640 180" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
+
+        <div class="network-card">
+          <h2 class="panel-title">Cognitive state distribution</h2>
+          <svg id="state-chart" class="chart-svg" viewBox="0 0 640 220" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
+
+        <div class="network-card">
+          <h2 class="panel-title">How these numbers are calculated</h2>
+          <ul id="calculations-list" class="calculations-list"></ul>
+        </div>
+      </section>
+
+      <section id="empty-state" class="board-card analytics-empty">
+        <p>Select a session on the left to see its analytics.</p>
+      </section>
+    </main>
+  </div>
+  <script src="/static/analytics.js"></script>
+</body>
+</html>

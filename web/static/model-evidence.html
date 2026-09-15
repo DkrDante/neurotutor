@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NeuroTutor — Model Evidence</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%232b2320'/%3E%3Ctext x='32' y='47' font-size='38' text-anchor='middle' fill='%23f0d9b5' font-family='Georgia,serif'%3E%E2%99%9E%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="page">
+    <header class="app-header">
+      <div class="brand">
+        <span class="brand-mark">&#9822;</span>
+        <div>
+          <h1>Model Evidence</h1>
+          <p class="tagline">Real weights, an independent evaluation, and a live forward pass — proof this is a trained model, not a stub.</p>
+        </div>
+      </div>
+      <div class="header-status">
+        <a href="/" class="nav-link">&larr; Tutor</a>
+        <a href="/calculations" class="nav-link">Calculations</a>
+        <a href="/puzzles" class="nav-link">Puzzle Library</a>
+        <a href="/analytics" class="nav-link">Analytics</a>
+      </div>
+    </header>
+
+    <main class="analytics-detail" id="evidence-main">
+      <section class="network-card">
+        <h2 class="panel-title">1. Weights &amp; biases</h2>
+        <p class="mini-label" id="weights-status">Loading…</p>
+        <div class="stat-grid" id="weights-summary"></div>
+        <p class="mini-label" style="margin-top: 1rem;">Mean |weight| per parameter tensor — real magnitude, not a placeholder</p>
+        <svg id="weights-chart" class="chart-svg" viewBox="0 0 640 260" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="calc-table-scroll">
+          <table class="calc-table">
+            <thead>
+              <tr>
+                <th>Parameter</th><th>Shape</th><th>Count</th><th>Mean</th><th>Std</th>
+                <th>Min</th><th>Max</th><th>Real sample values</th>
+              </tr>
+            </thead>
+            <tbody id="weights-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="network-card">
+        <h2 class="panel-title">2. Training curves</h2>
+        <p class="mini-label" id="history-status">Loading…</p>
+        <svg id="history-chart" class="chart-svg" viewBox="0 0 640 260" preserveAspectRatio="xMidYMid meet"></svg>
+      </section>
+
+      <section class="network-card">
+        <h2 class="panel-title">3. Evaluation metrics — Precision / Recall / F1 / ROC-AUC</h2>
+        <p class="mini-label" id="metrics-status">Loading…</p>
+        <div class="stat-grid" id="metrics-summary"></div>
+        <p class="mini-label" style="margin-top: 1rem;">Precision / Recall / F1 by cognitive state</p>
+        <svg id="metrics-chart" class="chart-svg" viewBox="0 0 640 240" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="calc-table-scroll">
+          <table class="calc-table">
+            <thead>
+              <tr><th>State</th><th>Precision</th><th>Recall</th><th>F1</th><th>ROC-AUC</th><th>Support</th></tr>
+            </thead>
+            <tbody id="per-class-body"></tbody>
+          </table>
+        </div>
+        <p class="mini-label" style="margin-top: 1rem;">Confusion matrix — rows are true state, columns are predicted state</p>
+        <div class="calc-table-scroll">
+          <table class="calc-table" id="confusion-table"></table>
+        </div>
+      </section>
+
+      <section class="network-card">
+        <h2 class="panel-title">4. Baseline comparison</h2>
+        <p class="mini-label">The same held-out test split, scored by classical non-neural baselines and the real fused model — is the architecture beating something trivial?</p>
+        <svg id="baselines-chart" class="chart-svg" viewBox="0 0 640 200" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="calc-table-scroll">
+          <table class="calc-table">
+            <thead><tr><th>Model</th><th>Test accuracy</th><th>Test F1</th></tr></thead>
+            <tbody id="baselines-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="network-card">
+        <h2 class="panel-title">5. Feature importance (permutation)</h2>
+        <p class="mini-label">Shuffle one real input at a time across the test batch and measure the actual accuracy drop — a bigger drop means the model really relies on that input, measured empirically, not asserted.</p>
+        <div class="stat-grid" id="importance-summary"></div>
+        <p class="mini-label" style="margin-top: 1rem;">Behavior features</p>
+        <svg id="behavior-importance-chart" class="chart-svg" viewBox="0 0 640 160" preserveAspectRatio="xMidYMid meet"></svg>
+        <p class="mini-label" style="margin-top: 1rem;">EEG channels (all 3 bands shuffled together per channel)</p>
+        <svg id="eeg-importance-chart" class="chart-svg" viewBox="0 0 640 180" preserveAspectRatio="xMidYMid meet"></svg>
+      </section>
+
+      <section class="network-card">
+        <h2 class="panel-title">6. Live forward-pass trace</h2>
+        <p class="mini-label">One real example, run through the real model right now — every intermediate number below is computed on demand, nothing is canned.</p>
+        <div class="trace-controls">
+          <label>Split
+            <select id="trace-split">
+              <option value="test" selected>test</option>
+              <option value="val">val</option>
+              <option value="train">train</option>
+            </select>
+          </label>
+          <label>Sample index
+            <input type="number" id="trace-index" value="0" min="0" step="1">
+          </label>
+          <button type="button" class="btn btn-secondary" id="trace-run">Run forward pass</button>
+        </div>
+        <p class="mini-label" id="trace-status"></p>
+
+        <p class="mini-label" style="margin-top: 1rem;">GCN layer 1 — learned channel-adjacency graph (edge intensity = deviation from the uniform baseline)</p>
+        <svg id="gcn1-graph" class="chart-svg" viewBox="0 0 300 300" preserveAspectRatio="xMidYMid meet"></svg>
+        <p class="mini-label" id="gcn1-graph-caption"></p>
+        <p class="mini-label" style="margin-top: 1rem;">GCN layer 2 — learned channel-adjacency graph</p>
+        <svg id="gcn2-graph" class="chart-svg" viewBox="0 0 300 300" preserveAspectRatio="xMidYMid meet"></svg>
+        <p class="mini-label" id="gcn2-graph-caption"></p>
+
+        <p class="mini-label" style="margin-top: 1rem;">GCN layer 1 output — per-channel activation magnitude</p>
+        <svg id="gcn1-activation-chart" class="chart-svg" viewBox="0 0 640 180" preserveAspectRatio="xMidYMid meet"></svg>
+        <p class="mini-label" style="margin-top: 1rem;">GCN layer 2 output — per-channel activation magnitude</p>
+        <svg id="gcn2-activation-chart" class="chart-svg" viewBox="0 0 640 180" preserveAspectRatio="xMidYMid meet"></svg>
+
+        <p class="mini-label" style="margin-top: 1rem;">Softmax probabilities for this example</p>
+        <svg id="softmax-chart" class="chart-svg" viewBox="0 0 640 200" preserveAspectRatio="xMidYMid meet"></svg>
+
+        <div id="trace-output"></div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/model-evidence.js"></script>
+</body>
+</html>

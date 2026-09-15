@@ -25,7 +25,9 @@ class BehaviorEvent:
 
 class TaskEngine(ABC):
     @abstractmethod
-    def get_puzzle(self, difficulty: float) -> Puzzle:
+    def get_puzzle(
+        self, difficulty: float, rating_min: float | None = None, rating_max: float | None = None,
+    ) -> Puzzle:
         raise NotImplementedError
 
     @abstractmethod

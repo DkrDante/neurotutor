@@ -6,3 +6,5 @@ data/
 model/checkpoints/
 *.db
 .pytest_cache/
+.DS_Store
+
