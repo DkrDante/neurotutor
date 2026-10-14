@@ -1,4 +1,5 @@
 from __future__ import annotations
+import json
 from pathlib import Path
 import numpy as np
 import torch
@@ -6,14 +7,36 @@ from model.fusion import FusionLSTMClassifier
 from common.config import NUM_CHANNELS, BAND_NAMES, NUM_BEHAVIOR_FEATS
 from common.states import STATES
 
+def read_checkpoint_config(checkpoint_path: Path) -> dict:
+    """The optional sidecar written by model/train_real.py (absent for the original
+    synthetic checkpoints): `behavior_mask`, `num_channels`, provenance, CV results."""
+    config_path = Path(str(checkpoint_path) + ".config.json")
+    return json.loads(config_path.read_text()) if config_path.exists() else {}
+
+
+def checkpoint_num_channels(checkpoint_path: Path) -> int:
+    """How many EEG channels a checkpoint was trained for — NUM_CHANNELS (8) for the
+    original synthetic one, whatever the headset had for a real-data one (e.g. 7
+    for a DSI-7). Serving code compares this with the live stream's channel count."""
+    return int(read_checkpoint_config(checkpoint_path).get("num_channels", NUM_CHANNELS))
+
+
 class StatePredictor:
     def __init__(self, checkpoint_path: Path):
+        # `behavior_mask` in the sidecar zeroes behaviour features the model was
+        # deliberately trained WITHOUT (e.g. puzzle_rating, which the data-collection
+        # protocol itself manipulates — see data_gen/from_recordings.py) so serving
+        # can't feed it a signal it never learned to ignore.
+        self.config: dict = read_checkpoint_config(checkpoint_path)
+        self.num_channels = int(self.config.get("num_channels", NUM_CHANNELS))
         self.model = FusionLSTMClassifier(
-            num_channels=NUM_CHANNELS, num_bands=len(BAND_NAMES),
+            num_channels=self.num_channels, num_bands=len(BAND_NAMES),
             num_behavior_feats=NUM_BEHAVIOR_FEATS, num_classes=len(STATES),
         )
         self.model.load_state_dict(torch.load(checkpoint_path, map_location="cpu", weights_only=True))
         self.model.eval()
+        mask = self.config.get("behavior_mask")
+        self.behavior_mask = np.asarray(mask, dtype=np.float32) if mask else None
 
     def predict(self, eeg_seq: np.ndarray, behavior_seq: np.ndarray):
         result = self.predict_with_internals(eeg_seq, behavior_seq)
@@ -26,6 +49,8 @@ class StatePredictor:
         norms. Nothing here is synthetic — it's the actual forward pass, computed one
         submodule at a time instead of via model.forward() so these values are visible.
         """
+        if self.behavior_mask is not None:
+            behavior_seq = behavior_seq * self.behavior_mask
         eeg_tensor = torch.tensor(eeg_seq, dtype=torch.float32).unsqueeze(0)
         behavior_tensor = torch.tensor(behavior_seq, dtype=torch.float32).unsqueeze(0)
         with torch.no_grad():
@@ -94,3 +119,21 @@ class StatePredictor:
             "behavior_w1": behavior_linear1.weight.detach().tolist(),  # (hidden_dim, in_dim)
             "behavior_w2": behavior_linear2.weight.detach().tolist(),  # (out_dim, hidden_dim)
         }
+
+
+class NullStatePredictor:
+    """Stands in for a model when none matches the live stream's channel count —
+    used ONLY by data collection (policy=fixed), where the tutor must keep serving
+    puzzles while the EEG is recorded for training, before any model exists for
+    this headset. It claims nothing: confidence is 0, so no policy acts on it."""
+    num_channels = None
+    behavior_mask = None
+    config: dict = {"null": True}
+
+    def predict(self, eeg_seq: np.ndarray, behavior_seq: np.ndarray):
+        result = self.predict_with_internals(eeg_seq, behavior_seq)
+        return result["state"], result["confidence"], result["probs"]
+
+    def predict_with_internals(self, eeg_seq: np.ndarray, behavior_seq: np.ndarray) -> dict:
+        uniform = 1.0 / len(STATES)
+        return {"state": STATES[0], "confidence": 0.0, "probs": {s: uniform for s in STATES}, "model_available": False}

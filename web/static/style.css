@@ -1023,3 +1023,21 @@ line.net-inspectable:hover { stroke: #2b2320 !important; stroke-opacity: 1 !impo
 }
 .onboarding-banner[hidden] { display: none; }
 .onboarding-banner-actions { display: flex; align-items: center; gap: 0.5rem; }
+
+/* ---- Embedded participant view (?embed=1, used inside /collect) ----------
+   Just the board and the tutor's feedback: no header, no model readouts (a
+   participant seeing their own "predicted state" would contaminate the very
+   state being recorded), no gamification. */
+body.embed { padding: 0.5rem 0.75rem 1rem; background: var(--page-bg); }
+body.embed .app-header,
+body.embed .mode-bar,
+body.embed .puzzle-meta,
+body.embed .status-card .status-row,
+body.embed #summary-button,
+body.embed #summary,
+body.embed .moves-card,
+body.embed .gamify-card,
+body.embed .network-section,
+body.embed #onboarding-banner,
+body.embed #move-explain,
+body.embed .board-hero > .hint-text { display: none !important; }

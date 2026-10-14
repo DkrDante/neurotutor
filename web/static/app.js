@@ -451,7 +451,10 @@ async function showSummary() {
 // then only node/edge visual attributes update afterward.
 // ---------------------------------------------------------------------------
 
-const NUM_EEG_NODES = 8;
+// The number of EEG channels (graph nodes) follows the model/stream — 8 for the
+// original synthetic model, 7 for a DSI-7, etc. Set from the first EEG chunk or the
+// first network_activity message (setEegNodeCount, below).
+let NUM_EEG_NODES = 8;
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 // Real, unbounded magnitudes (vector norms/activations) squashed into a
@@ -792,8 +795,8 @@ let eegLayer2Edges = [];
 // edge is always drawn; only its INTENSITY is scaled by how far the real
 // weight deviates from the uniform (1/n) baseline, with a guaranteed
 // minimum floor so a flat matrix still shows a faint but visible mesh.
-const EEG_ADJACENCY_BASELINE = 1 / NUM_EEG_NODES;
-const EEG_MAX_DEVIATION = 1 - EEG_ADJACENCY_BASELINE;
+let EEG_ADJACENCY_BASELINE = 1 / NUM_EEG_NODES;
+let EEG_MAX_DEVIATION = 1 - EEG_ADJACENCY_BASELINE;
 
 function adjacencyDeviationStrength(weight) {
   return Math.min(1, Math.abs(weight - EEG_ADJACENCY_BASELINE) / EEG_MAX_DEVIATION);
@@ -1138,7 +1141,7 @@ function updateFusionGraph(activity, eegLevel) {
 // (setEvalBar, hints, gamification…), so an uncaught error here would take
 // all of that down with it; this call site guards specifically against that.
 function updateNetworkDiagram(activity) {
-  if (!activity) return;
+  if (!activity || activity.model_available === false) return;   // data-collection mode: no model, nothing to draw
   try {
     renderNetworkDiagram(activity);
   } catch (err) {
@@ -1148,6 +1151,7 @@ function updateNetworkDiagram(activity) {
 
 function renderNetworkDiagram(activity) {
   lastNetworkActivity = activity;
+  if (activity.gcn1_adjacency) setEegNodeCount(activity.gcn1_adjacency.length);
   if (!panelsBuilt) {
     buildBehaviorNN(activity);
     buildEegGraph(activity);
@@ -1174,10 +1178,24 @@ function renderNetworkDiagram(activity) {
 // ---------------------------------------------------------------------------
 
 const EEG_WINDOW = 160; // samples retained per channel (~1.25s at the simulator's 128Hz)
-const eegBuffers = Array.from({ length: NUM_EEG_NODES }, () => []);
+let eegBuffers = Array.from({ length: NUM_EEG_NODES }, () => []);
+
+// Re-sizes everything that depends on the channel count. If the network diagram was
+// already drawn for a different count (a reconnect to a different headset), the
+// simplest correct thing is a page reload — the diagrams are built once per page.
+function setEegNodeCount(count) {
+  if (!Number.isInteger(count) || count < 1 || count === NUM_EEG_NODES) return;
+  const diagramAlreadyBuilt = typeof panelsBuilt !== "undefined" && panelsBuilt;
+  NUM_EEG_NODES = count;
+  EEG_ADJACENCY_BASELINE = 1 / count;
+  EEG_MAX_DEVIATION = 1 - EEG_ADJACENCY_BASELINE;
+  eegBuffers = Array.from({ length: count }, () => []);
+  if (diagramAlreadyBuilt) window.location.reload();
+}
 const EEG_CHANNEL_COLORS = ["#4a7c2f", "#b58863", "#3f7fbf", "#b91c1c", "#c2410c", "#6d28d9", "#0f766e", "#a16207"];
 
 function onEegChunk(msg) {
+  if (msg.samples.length) setEegNodeCount(msg.samples[0].length);
   for (const row of msg.samples) {
     for (let ch = 0; ch < NUM_EEG_NODES; ch++) {
       const buf = eegBuffers[ch];
@@ -1200,7 +1218,7 @@ function drawEegWaveform() {
     if (buf.length < 2) continue;
     const baseline = bandHeight * ch + bandHeight / 2;
     ctx.beginPath();
-    ctx.strokeStyle = EEG_CHANNEL_COLORS[ch];
+    ctx.strokeStyle = EEG_CHANNEL_COLORS[ch % EEG_CHANNEL_COLORS.length];
     ctx.lineWidth = 1;
     for (let i = 0; i < buf.length; i++) {
       const x = (i / (EEG_WINDOW - 1)) * w;
@@ -2138,16 +2156,28 @@ function startTargetedPractice(ratingMin, ratingMax) {
   reconnect();
 }
 
+// Page-level overrides (/collect embeds this page with them, and they also make a
+// specific configuration bookmarkable): ?source=hub uses the shared live EEG
+// source, ?policy=fixed disables adaptation, ?target_min=&target_max= pins the
+// puzzle rating band, ?learner_id= overrides the generated id, ?embed=1 strips
+// the page down to the board for a participant.
+const PAGE_PARAMS = new URLSearchParams(window.location.search);
+if (PAGE_PARAMS.get("embed") === "1") document.body.classList.add("embed");
+
 function connect() {
-  const mode = document.getElementById("mode-select").value;
-  const policy = document.getElementById("policy-select").value;
-  const learnerId = getLearnerId();
+  const mode = PAGE_PARAMS.get("mode") || document.getElementById("mode-select").value;
+  const policy = PAGE_PARAMS.get("policy") || document.getElementById("policy-select").value;
+  const learnerId = PAGE_PARAMS.get("learner_id") || getLearnerId();
   const params = new URLSearchParams({ mode, policy });
   if (learnerId) params.set("learner_id", learnerId);
+  if (PAGE_PARAMS.get("source")) params.set("source", PAGE_PARAMS.get("source"));
   if (targetedPracticeRange) {
     params.set("target_min", targetedPracticeRange.min);
     params.set("target_max", targetedPracticeRange.max);
     targetedPracticeRange = null;
+  } else if (PAGE_PARAMS.get("target_min") && PAGE_PARAMS.get("target_max")) {
+    params.set("target_min", PAGE_PARAMS.get("target_min"));
+    params.set("target_max", PAGE_PARAMS.get("target_max"));
   }
   ws = new WebSocket(`ws://${window.location.host}/ws/session?${params.toString()}`);
   const feedbackEl = document.getElementById("feedback");

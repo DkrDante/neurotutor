@@ -58,7 +58,13 @@ class TutorSession:
         self.store = store
         self.difficulty = initial_difficulty
         self.session_id = store.create_session()
-        self.epoch_buffer = EpochBuffer(num_channels=eeg_source.num_channels, sample_rate=eeg_source.sample_rate)
+        # A real headset's source scales its artifact threshold to its own
+        # normalised units (eeg.lsl); the simulator has none and uses the default.
+        artifact_threshold = getattr(eeg_source, "artifact_threshold", None)
+        buffer_kwargs = {"artifact_threshold": artifact_threshold} if artifact_threshold is not None else {}
+        self.epoch_buffer = EpochBuffer(
+            num_channels=eeg_source.num_channels, sample_rate=eeg_source.sample_rate, **buffer_kwargs,
+        )
         self._eeg_history: list[np.ndarray] = []
         self._behavior_history: list[np.ndarray] = []
         # Rolling (predicted_state, confidence) history feeding the PROACTIVE

@@ -8,3 +8,5 @@ model/checkpoints/
 .pytest_cache/
 .DS_Store
 
+recordings/
+neurotutor.db

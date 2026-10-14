@@ -2,7 +2,10 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+import json
+import os
 import shutil
+import time
 import uuid
 from pathlib import Path
 import chess
@@ -11,6 +14,13 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from accounts.storage import AccountStore, InvalidCredentialsError, UsernameTakenError
+from common.config import NUM_CHANNELS, SAMPLE_RATE
+from common.states import STATES
+from eeg.hub import EEGHub, HubSubscriberSource, collect_attempts
+from eeg.live_state import LiveStateEstimator, band_summary
+from eeg.lsl import LSLEEGSource, LSLStreamNotFound
+from eeg.recorder import DEFAULT_ROOT as RECORDINGS_ROOT
+from eeg.replay import ReplayEEGSource
 from eeg.simulated import SimulatedEEGSource
 from chess_task.base import Puzzle
 from chess_task.motifs import classify_puzzle
@@ -21,7 +31,8 @@ from chess_task.move_explainer import (
     PIECE_NAMES, describe_move, explain_illegal_move, explain_suboptimal_move, legal_targets, score_move,
 )
 import model.evidence as evidence
-from model.inference import StatePredictor
+from model.inference import NullStatePredictor, StatePredictor, checkpoint_num_channels
+from adaptive.fixed import FixedPolicy
 from adaptive.rule_based import RuleBasedPolicy
 from adaptive.rl_policy import QLearningPolicy
 from coaching.narrator import build_coaching_report
@@ -30,11 +41,13 @@ from coaching.trace import build_attempt_trace, build_calculation_trace
 from storage.db import SessionStore
 from web.session import TutorSession
 
-DEFAULT_CHECKPOINT = Path("model/checkpoints/best.pt")
+# Overridable so a model trained on real recordings (model/train_real.py) can be served
+# without touching the synthetic-data checkpoint the /model-evidence page documents.
+DEFAULT_CHECKPOINT = Path(os.environ.get("NEUROTUTOR_CHECKPOINT", "model/checkpoints/best.pt"))
 # Real model trained with behavior features zeroed out (model/ablation.py) — loaded
 # only if present, so a fresh checkout without the ablation study still serves fine
 # (just without the "EEG-only" readout in the network-activity panel).
-EEG_ONLY_CHECKPOINT = Path("model/checkpoints/ablation-eeg_only.pt")
+EEG_ONLY_CHECKPOINT = Path(os.environ.get("NEUROTUTOR_EEG_ONLY_CHECKPOINT", "model/checkpoints/ablation-eeg_only.pt"))
 STATIC_DIR = Path(__file__).parent / "static"
 DEFAULT_STARTING_DIFFICULTY = 1000.0
 
@@ -79,6 +92,16 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 _store = SessionStore("neurotutor.db")
 _account_store = AccountStore("neurotutor.db")
+# The one live EEG source (real headset over LSL, or the simulator for demos) shared
+# by the tutor's WebSocket sessions, the /live monitor and the session recorder.
+_hub = EEGHub(recordings_root=RECORDINGS_ROOT)
+_live_estimator: LiveStateEstimator | None = None
+
+def _get_live_estimator() -> LiveStateEstimator:
+    global _live_estimator
+    if _live_estimator is None:
+        _live_estimator = LiveStateEstimator()
+    return _live_estimator
 
 @app.get("/")
 def index():
@@ -150,6 +173,225 @@ def api_puzzles():
             "motif": motif,
         })
     return {"total": len(rows), "puzzles": rows}
+
+
+# ---------------------------------------------------------------------------
+# Live EEG hub: connect a headset (LSL) or the simulator, monitor it, record it.
+# ---------------------------------------------------------------------------
+
+@app.get("/live")
+def live_page():
+    return FileResponse(STATIC_DIR / "live.html")
+
+@app.get("/collect")
+def collect_page():
+    return FileResponse(STATIC_DIR / "collect.html")
+
+class EEGConnectRequest(BaseModel):
+    source: str = "lsl"  # "lsl" (real headset / fake_lsl), "sim" (built-in simulator) or "replay" (a saved recording)
+    recording: str | None = None   # replay: a recording directory under recordings/
+    speed: float = 1.0             # replay speed multiplier
+    stream_type: str = "EEG"
+    stream_name: str | None = None
+    channels: list[int] | None = None
+    channel_names: list[str] | None = None   # e.g. ["Fz","Pz","P4",...] (matched against the stream's labels)
+    unit_scale: float = 1.0                  # multiply raw values by this to get microvolts (1e6 if the stream is in volts)
+    noisy_rms_uv: float = 150.0              # per-channel RMS above this reads as "noisy" (dry electrodes may need more)
+    notch_hz: float | None = 50.0
+    calibration_seconds: float = 30.0
+    sim_state: str = "Focused"
+
+@app.post("/api/eeg/connect")
+async def eeg_connect(body: EEGConnectRequest):
+    warnings: list[str] = []
+    if body.source == "sim":
+        if body.sim_state not in STATES:
+            raise HTTPException(status_code=400, detail=f"sim_state must be one of {STATES}.")
+        source = SimulatedEEGSource(target_state=body.sim_state)
+    elif body.source == "lsl":
+        source = LSLEEGSource(
+            stream_type=body.stream_type, stream_name=body.stream_name or None,
+            channel_indices=body.channels, channel_names=body.channel_names or None, notch_hz=body.notch_hz,
+            calibration_seconds=body.calibration_seconds, unit_scale=body.unit_scale, noisy_rms_uv=body.noisy_rms_uv,
+        )
+        try:
+            await asyncio.to_thread(source.connect)
+        except LSLStreamNotFound as err:
+            raise HTTPException(status_code=404, detail=str(err))
+    elif body.source == "replay":
+        if not body.recording:
+            raise HTTPException(status_code=400, detail="replay needs a 'recording' directory.")
+        root = RECORDINGS_ROOT.resolve()
+        directory = Path(body.recording).resolve()
+        # Only recordings under recordings/ — never an arbitrary path on disk.
+        if root not in directory.parents or not (directory / "meta.json").exists():
+            raise HTTPException(status_code=404, detail="No such recording under recordings/.")
+        try:
+            source = ReplayEEGSource(directory, speed=body.speed)
+        except ValueError as err:
+            raise HTTPException(status_code=422, detail=str(err))
+    else:
+        raise HTTPException(status_code=400, detail="source must be 'lsl', 'sim' or 'replay'.")
+
+    model_channels = checkpoint_num_channels(DEFAULT_CHECKPOINT)
+    if source.num_channels != model_channels:
+        warnings.append(
+            f"The stream has {source.num_channels} usable channels ({', '.join(getattr(source, 'channel_names', []) or [])}) "
+            f"but the tutor model expects {model_channels}. Monitoring (/live) and data collection (/collect) work; "
+            "the tutor's own predictions need a model trained on this headset's recordings "
+            "(python -m model.train_real, then NEUROTUTOR_CHECKPOINT=...)."
+        )
+    await _hub.connect(source, body.source)
+    return {"connected": True, "warnings": warnings, "status": _hub.status()}
+
+@app.post("/api/eeg/disconnect")
+async def eeg_disconnect():
+    await _hub.disconnect()
+    return {"connected": False}
+
+@app.get("/api/eeg/status")
+def eeg_status():
+    return {
+        **_hub.status(), "quality": _hub.quality() if _hub.source else [],
+        "tutor_model_channels": checkpoint_num_channels(DEFAULT_CHECKPOINT),
+    }
+
+class RecalibrateRequest(BaseModel):
+    seconds: float = 30.0
+
+@app.post("/api/eeg/recalibrate")
+def eeg_recalibrate(body: RecalibrateRequest):
+    recalibrate = getattr(_hub.source, "recalibrate", None)
+    if not callable(recalibrate):
+        raise HTTPException(status_code=409, detail="The connected source has no baseline to recalibrate.")
+    recalibrate(body.seconds)
+    return {"calibrating": True, "seconds": body.seconds}
+
+class SimStateRequest(BaseModel):
+    state: str
+
+@app.post("/api/eeg/sim-state")
+def eeg_sim_state(body: SimStateRequest):
+    if _hub.kind != "sim" or not isinstance(_hub.source, SimulatedEEGSource):
+        raise HTTPException(status_code=409, detail="Only the built-in simulator has a settable state.")
+    if body.state not in STATES:
+        raise HTTPException(status_code=400, detail=f"state must be one of {STATES}.")
+    _hub.source.set_target_state(body.state)
+    return {"state": body.state}
+
+class RecordStartRequest(BaseModel):
+    participant: str
+    label: str = ""
+
+@app.post("/api/record/start")
+def record_start(body: RecordStartRequest):
+    participant = body.participant.strip()
+    if not participant:
+        raise HTTPException(status_code=400, detail="participant is required.")
+    try:
+        recorder = _hub.start_recording(participant, body.label)
+    except RuntimeError as err:
+        raise HTTPException(status_code=409, detail=str(err))
+    return {"recording": True, "directory": str(recorder.directory)}
+
+@app.post("/api/record/stop")
+def record_stop():
+    recorder = _hub.recorder
+    if recorder is None or not recorder.active:
+        raise HTTPException(status_code=409, detail="Not recording.")
+    attempts = collect_attempts(_store, recorder.started_at, time.time())
+    samples = recorder.samples_written
+    directory = _hub.stop_recording(attempts=attempts)
+    return {"recording": False, "directory": str(directory), "samples": samples, "attempts": len(attempts)}
+
+class MarkerRequest(BaseModel):
+    kind: str
+    data: dict = {}
+
+@app.post("/api/record/marker")
+def record_marker(body: MarkerRequest):
+    """Block boundaries and self-report answers. Always accepted (so /live can
+    show the current block even when not recording); written to disk only while
+    a recording is active."""
+    reserved = {"kind", "t"} & set(body.data)
+    if reserved:
+        raise HTTPException(status_code=400, detail=f"marker data may not use the reserved key(s): {sorted(reserved)}")
+    return _hub.add_marker(body.kind, **body.data)
+
+@app.get("/api/record/list")
+def record_list():
+    items = []
+    if RECORDINGS_ROOT.exists():
+        for meta_path in sorted(RECORDINGS_ROOT.glob("*/*/meta.json"), reverse=True):
+            try:
+                meta = json.loads(meta_path.read_text())
+            except (OSError, ValueError):
+                continue
+            items.append({
+                "directory": str(meta_path.parent), "participant": meta.get("participant"),
+                "started_at": meta.get("started_at"), "ended_at": meta.get("ended_at"),
+                "samples": meta.get("samples"), "sample_rate": meta.get("sample_rate"),
+            })
+    return {"recordings": items}
+
+@app.websocket("/ws/live")
+async def live_endpoint(websocket: WebSocket):
+    """Everything the /live page shows: the streamed waveform, plus once a second
+    the stream status, per-channel signal quality, band powers and a running
+    EEG-only state estimate; and the tutor's own per-move updates when someone
+    is playing at the same time."""
+    await websocket.accept()
+    chunks = _hub.subscribe()
+    events = _hub.subscribe_events()
+    estimator = _get_live_estimator()
+    send_lock = asyncio.Lock()
+
+    async def send(payload: dict) -> None:
+        async with send_lock:
+            await websocket.send_json(payload)
+
+    async def pump_chunks() -> None:
+        while True:
+            chunk = await chunks.get()
+            await send({"type": "eeg_chunk", "samples": chunk.samples.tolist()})
+
+    async def pump_events() -> None:
+        while True:
+            await send({"type": "tutor_update", **await events.get()})
+
+    async def analytics() -> None:
+        while True:
+            await send({
+                "type": "status", **_hub.status(),
+                "quality": _hub.quality() if _hub.source else [],
+                "tutor_model_channels": checkpoint_num_channels(DEFAULT_CHECKPOINT),
+                "live_model": {
+                    "available": estimator.available, "label": estimator.label, "preliminary": estimator.preliminary,
+                    "num_channels": estimator.num_channels,
+                },
+            })
+            if _hub.connected and _hub.source is not None:
+                rate = _hub.source.sample_rate
+                window = _hub.window(24.0)
+                bands = await asyncio.to_thread(band_summary, window, rate)
+                if bands is not None:
+                    await send({"type": "bands", **bands})
+                state = await asyncio.to_thread(estimator.estimate, window, rate)
+                if state is not None:
+                    await send({"type": "state", **state})
+            await asyncio.sleep(1.0)
+
+    tasks = [asyncio.create_task(c()) for c in (pump_chunks, pump_events, analytics)]
+    try:
+        while True:
+            await websocket.receive_text()  # we only need to notice the disconnect
+    except WebSocketDisconnect:
+        pass
+    finally:
+        for task in tasks:
+            task.cancel()
+        _hub.unsubscribe(chunks)
+        _hub.unsubscribe_events(events)
 
 @app.get("/learn")
 def learn_page():
@@ -854,7 +1096,40 @@ async def session_endpoint(websocket: WebSocket):
     target_rating_min = float(target_min_raw) if target_min_raw else None
     target_rating_max = float(target_max_raw) if target_max_raw else None
 
-    eeg_source = SimulatedEEGSource(target_state="Focused")
+    # ?source=sim (default; a private simulator sized to the model, as before) or
+    # ?source=hub (the shared live source connected via /api/eeg/connect — a real
+    # headset, with however many channels it has).
+    model_channels = checkpoint_num_channels(DEFAULT_CHECKPOINT)
+    source_name = websocket.query_params.get("source", "sim")
+    if source_name == "hub":
+        if not _hub.connected or _hub.source is None:
+            await websocket.send_json({
+                "type": "error",
+                "message": "No EEG source is connected. Open /live and connect the headset first.",
+            })
+            return
+        stream_channels = _hub.source.num_channels
+        if _hub.source.sample_rate != SAMPLE_RATE:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"The live stream is {_hub.source.sample_rate} Hz but the model expects {SAMPLE_RATE} Hz.",
+            })
+            return
+        # Data collection (policy=fixed) must keep working before a model exists for this
+        # headset's channel count — it records the EEG and serves puzzles without predictions.
+        if stream_channels != model_channels and policy_name != "fixed":
+            await websocket.send_json({
+                "type": "error",
+                "message": (
+                    f"The live stream has {stream_channels} channels but the loaded model expects {model_channels}. "
+                    "Record data with /collect, train a model for this headset (python -m model.train_real) and start "
+                    "the server with NEUROTUTOR_CHECKPOINT pointing at it."
+                ),
+            })
+            return
+        eeg_source = HubSubscriberSource(_hub)
+    else:
+        eeg_source = SimulatedEEGSource(num_channels=model_channels, target_state="Focused")
     evaluator = build_evaluator()
 
     # Multi-session personalization: a returning learner resumes at their last
@@ -873,14 +1148,24 @@ async def session_endpoint(websocket: WebSocket):
         already_served = profile.get("served_puzzle_ids") if profile else None
         task_engine = PuzzleTaskEngine(evaluator=evaluator, already_served=already_served)
 
-    predictor = StatePredictor(DEFAULT_CHECKPOINT)
+    predictor = StatePredictor(DEFAULT_CHECKPOINT) if eeg_source.num_channels == model_channels else NullStatePredictor()
     eeg_only_predictor = StatePredictor(EEG_ONLY_CHECKPOINT) if EEG_ONLY_CHECKPOINT.exists() else None
+    if eeg_only_predictor is not None and eeg_only_predictor.num_channels != eeg_source.num_channels:
+        eeg_only_predictor = None   # trained for a different channel count: the panel just isn't shown
 
     if policy_name == "rl":
         policy = (
             QLearningPolicy.from_state(profile["policy_state"])
             if profile and profile.get("policy_state") else QLearningPolicy()
         )
+    elif policy_name == "fixed":
+        # Data-collection mode (/collect): no adaptation, and — because puzzle
+        # selection picks the unserved puzzle nearest the difficulty number — pin
+        # that number to the middle of the requested rating band so the block's
+        # puzzles are spread across the band instead of walking outward from 1000.
+        policy = FixedPolicy()
+        if target_rating_min is not None and target_rating_max is not None:
+            initial_difficulty = (target_rating_min + target_rating_max) / 2.0
     else:
         policy = RuleBasedPolicy()
 
@@ -910,6 +1195,16 @@ async def session_endpoint(websocket: WebSocket):
     async def send(payload: dict) -> None:
         async with send_lock:
             await websocket.send_json(payload)
+        if payload.get("type") == "update":
+            # Mirror the per-move result to the /live monitor (no-op if nobody listens).
+            _hub.publish_event({
+                "t": time.time(), "mode": mode, "session_id": session.session_id,
+                "correct": payload["correct"], "predicted_state": payload["predicted_state"],
+                "confidence": payload["confidence"], "probs": payload["probs"],
+                "difficulty": payload["difficulty"], "action": payload["action"],
+                "status": payload["status"], "proactive_intervention": payload["proactive_intervention"],
+                "move_quality_label": payload["move_quality_label"],
+            })
 
     async def stream_eeg() -> None:
         # Continuously fill the epoch buffer so extract_epoch() sees a full 4.0s of real

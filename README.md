@@ -80,6 +80,24 @@ asking you to trust the numbers:
   distribution, engagement trend, rule-vs-RL divergence rate), with CSV
   export.
 
+## Real EEG headset (LSL)
+
+Any headset that publishes an LSL `EEG` stream (OpenBCI, Muse via `muselsl`, …) plugs in through
+`eeg/lsl.py`; nothing downstream changes. Two more pages cover the live side:
+
+- `/live` — connect the headset (or the simulator, or replay a saved recording), watch per-channel signal
+  quality, the waveform, band power, a running EEG-only state estimate, and the tutor's per-move updates;
+  start/stop recordings.
+- `/collect` — a guided ~45 min protocol (baselines → randomised Focused / Confused / Overloaded blocks with
+  self-reports → late "fatigue" blocks) that records the EEG, labels and chess attempts with no manual annotation.
+
+Then `python -m data_gen.from_recordings …` builds a labelled dataset and `python -m model.train_real …`
+trains and evaluates on it (block-wise cross-validation, baselines, ablation). To rehearse everything with no
+hardware: `python -m eeg.fake_lsl --cycle 25` (a fake headset) and `python -m data_gen.fake_recording`.
+
+See **`docs/EEG_RUNBOOK.md`** for the step-by-step headset-day checklist, the collection procedure,
+training commands and troubleshooting.
+
 ## Run the tests
 
 ```bash

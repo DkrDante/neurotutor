@@ -8,6 +8,10 @@ import numpy as np
 class EEGChunk:
     timestamp: float
     samples: np.ndarray  # shape (chunk_samples, num_channels)
+    # Optional: the same samples before per-person normalisation, in microvolts
+    # (real headsets only). The recorder stores this so a participant's baseline
+    # can be applied offline; the simulator leaves it None.
+    uv: np.ndarray | None = None
 
 class EEGSource(ABC):
     sample_rate: int
