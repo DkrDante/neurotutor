@@ -9,115 +9,135 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/ops.css">
   <link rel="stylesheet" href="/static/live.css">
 </head>
-<body>
-  <div class="page">
-    <header class="app-header">
-      <div class="brand">
-        <span class="brand-mark">&#9822;</span>
-        <div>
-          <h1>Live EEG Monitor</h1>
-          <p class="tagline">Real stream, real signal quality, real band power &mdash; nothing on this page is canned.</p>
-        </div>
-      </div>
-      <div class="header-status">
-        <a href="/" class="nav-link">&larr; Tutor</a>
-        <a href="/collect" class="nav-link">Data collection &rarr;</a>
-        <a href="/model-evidence" class="nav-link">Model Evidence &rarr;</a>
-        <span id="ws-dot" class="connection-dot"></span>
-        <span id="ws-label">Connecting&hellip;</span>
-      </div>
-    </header>
+<body class="ops">
+  <header class="ops-bar">
+    <div class="ops-brand"><span class="brand-mark">&#9822;</span><strong>Live signal</strong></div>
+    <nav class="ops-nav">
+      <a href="/collect">Data collection</a>
+      <a href="/">Tutor</a>
+      <a href="/model-evidence">Model evidence</a>
+      <span class="ws"><span id="ws-dot" class="connection-dot"></span><span id="ws-label">Connecting&hellip;</span></span>
+    </nav>
+  </header>
 
-    <div class="live-grid">
-      <!-- Connection -->
-      <section class="network-card live-card" id="connection-card">
-        <h2 class="panel-title">Source <span class="panel-subtitle">&mdash; headset over LSL, or the built-in simulator</span></h2>
-        <div class="form-row">
-          <label>Source
+  <main class="ops-main live-main">
+    <!-- Left: connect, signal quality, recording -->
+    <div class="col col-left">
+      <section class="ops-card" id="connection-card">
+        <h2>Headset</h2>
+        <div class="src-row">
+          <label class="field">Source
             <select id="src-kind">
-              <option value="lsl">Headset (LSL stream)</option>
-              <option value="sim">Simulator (no hardware)</option>
-              <option value="replay">Replay a saved recording</option>
+              <option value="lsl">Headset (LSL)</option>
+              <option value="sim">Simulator</option>
+              <option value="replay">Replay</option>
             </select>
           </label>
-          <label id="lbl-stream-name">LSL stream name <span class="opt">(optional)</span>
-            <input id="src-name" type="text" placeholder="match by type EEG if empty" autocomplete="off">
-          </label>
-          <label id="lbl-channel-names">Channel names <span class="opt">(optional, e.g. Fz,Pz,P4)</span>
-            <input id="src-channel-names" type="text" placeholder="auto: all EEG channels, minus trigger/reference" autocomplete="off">
-          </label>
-          <label id="lbl-channels">Channel numbers <span class="opt">(optional, e.g. 0,1,2)</span>
-            <input id="src-channels" type="text" placeholder="" autocomplete="off">
-          </label>
-          <label id="lbl-notch">Mains
-            <select id="src-notch"><option value="50">50 Hz</option><option value="60">60 Hz</option><option value="">off</option></select>
-          </label>
-          <label id="lbl-calib">Baseline (s)
-            <input id="src-calib" type="number" min="5" max="300" value="30">
-          </label>
-          <label id="lbl-recording" hidden>Recording
-            <select id="rep-recording"></select>
-          </label>
-          <label id="lbl-speed" hidden>Speed
-            <select id="rep-speed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select>
-          </label>
-          <label id="lbl-simstate" hidden>Simulated state
+          <label id="lbl-simstate" class="field" hidden>Simulated state
             <select id="sim-state"></select>
           </label>
+          <label id="lbl-recording" class="field" hidden>Recording
+            <select id="rep-recording"></select>
+          </label>
+          <label id="lbl-speed" class="field" hidden>Speed
+            <select id="rep-speed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select>
+          </label>
         </div>
+        <details id="adv-lsl" class="adv">
+          <summary>Advanced (usually not needed)</summary>
+          <div class="adv-grid">
+            <label id="lbl-stream-name" class="field">Stream name <span class="opt">(empty = find it automatically)</span>
+              <input id="src-name" type="text" placeholder="found automatically" autocomplete="off">
+            </label>
+            <label id="lbl-channel-names" class="field">Channel names <span class="opt">(e.g. Fz,Pz,P4)</span>
+              <input id="src-channel-names" type="text" placeholder="all EEG channels" autocomplete="off">
+            </label>
+            <label id="lbl-channels" class="field">Channel numbers <span class="opt">(e.g. 0,1,2)</span>
+              <input id="src-channels" type="text" placeholder="" autocomplete="off">
+            </label>
+            <label id="lbl-notch" class="field">Mains
+              <select id="src-notch"><option value="50">50 Hz</option><option value="60">60 Hz</option><option value="">off</option></select>
+            </label>
+            <label id="lbl-calib" class="field">Baseline (s)
+              <input id="src-calib" type="number" min="5" max="300" value="30">
+            </label>
+          </div>
+        </details>
         <div class="btn-row">
-          <button id="btn-connect" class="btn btn-primary" type="button">Connect</button>
-          <button id="btn-disconnect" class="btn btn-secondary" type="button">Disconnect</button>
-          <button id="btn-recalibrate" class="btn btn-secondary" type="button">Recalibrate baseline</button>
+          <button id="btn-connect" class="btn btn-primary sm" type="button">Connect</button>
+          <button id="btn-disconnect" class="btn btn-secondary sm" type="button">Disconnect</button>
+          <button id="btn-recalibrate" class="btn btn-secondary sm" type="button">Recalibrate</button>
         </div>
         <p id="connect-msg" class="live-msg" role="status"></p>
         <div id="calib-wrap" class="calib-wrap" hidden>
-          <span class="mini-label">Learning resting baseline &mdash; sit still, eyes open</span>
+          <span class="mini">Learning your resting baseline: sit still, eyes open</span>
           <div class="bar"><div id="calib-fill" class="bar-fill"></div></div>
         </div>
       </section>
 
-      <!-- Health -->
-      <section class="network-card live-card" id="health-card">
-        <h2 class="panel-title">Stream health</h2>
-        <div class="stat-grid live-stats">
-          <div class="stat-card"><div id="h-status" class="stat-card-value">&mdash;</div><div class="stat-card-label">Status</div></div>
-          <div class="stat-card"><div id="h-rate" class="stat-card-value">&mdash;</div><div class="stat-card-label">Rate</div></div>
-          <div class="stat-card"><div id="h-ch" class="stat-card-value">&mdash;</div><div class="stat-card-label">Channels</div></div>
-          <div class="stat-card"><div id="h-age" class="stat-card-value">&mdash;</div><div class="stat-card-label">Last data</div></div>
-          <div class="stat-card"><div id="h-up" class="stat-card-value">&mdash;</div><div class="stat-card-label">Uptime</div></div>
-          <div class="stat-card"><div id="h-rec" class="stat-card-value">off</div><div class="stat-card-label">Recording</div></div>
-        </div>
-        <p class="mini-label" style="margin-top:.9rem">Signal quality per channel (RMS of the filtered signal, in microvolts)</p>
+      <section class="ops-card" id="health-card">
+        <h2>Signal <span class="hint">RMS in &micro;V</span></h2>
         <div id="quality-grid" class="quality-grid"></div>
-        <p class="mini-label legend"><span class="q-dot q-ok"></span>ok <span class="q-dot q-noisy"></span>noisy / motion <span class="q-dot q-flat"></span>flat / no contact</p>
+        <dl class="kv">
+          <div><dt>Status</dt><dd id="h-status">&mdash;</dd></div>
+          <div><dt>Rate</dt><dd id="h-rate">&mdash;</dd></div>
+          <div><dt>Channels</dt><dd id="h-ch">&mdash;</dd></div>
+          <div><dt>Last data</dt><dd id="h-age">&mdash;</dd></div>
+          <div><dt>Uptime</dt><dd id="h-up">&mdash;</dd></div>
+          <div><dt>Recording</dt><dd id="h-rec">off</dd></div>
+        </dl>
       </section>
 
-      <!-- Waveform -->
-      <section class="network-card live-card wide">
-        <h2 class="panel-title">EEG waveform <span class="panel-subtitle">&mdash; last 4 s, normalised to your baseline</span></h2>
-        <div class="wave-controls">
-          <label>Gain <input id="wave-gain" type="range" min="0.3" max="4" step="0.1" value="1"></label>
-          <button id="wave-pause" class="btn btn-secondary" type="button">Pause</button>
+      <section class="ops-card grow" id="record-card">
+        <h2>Record</h2>
+        <div class="src-row">
+          <label class="field">Participant
+            <input id="rec-participant" type="text" placeholder="e.g. P01" autocomplete="off">
+          </label>
+          <label class="field">Label
+            <input id="rec-label" type="text" placeholder="e.g. pilot" autocomplete="off">
+          </label>
         </div>
+        <div class="btn-row">
+          <button id="btn-rec-start" class="btn btn-primary sm" type="button">Start recording</button>
+          <button id="btn-rec-stop" class="btn btn-secondary sm" type="button">Stop &amp; save</button>
+        </div>
+        <div id="marker-row" class="btn-row markers"></div>
+        <p id="record-msg" class="live-msg" role="status"></p>
+        <div class="scroll"><ul id="rec-list" class="tutor-log"></ul></div>
+        <p class="mini">For real data collection use <a href="/collect">Data collection</a>; it labels everything for you.</p>
+      </section>
+    </div>
+
+    <!-- Centre: the waveform gets all the spare height -->
+    <div class="col col-mid">
+      <section class="ops-card grow" id="wave-card">
+        <h2>EEG <span class="hint">last 4 s, scaled to your resting baseline</span>
+          <span class="wave-controls">
+            <label>Gain <input id="wave-gain" type="range" min="0.3" max="4" step="0.1" value="1"></label>
+            <button id="wave-pause" class="btn btn-secondary sm" type="button">Pause</button>
+          </span>
+        </h2>
         <canvas id="wave" class="wave-canvas"></canvas>
       </section>
 
-      <!-- Bands -->
-      <section class="network-card live-card">
-        <h2 class="panel-title">Band power <span class="panel-subtitle">&mdash; relative share, averaged over channels</span></h2>
-        <div id="band-bars" class="band-bars"></div>
-        <p class="mini-label" style="margin-top:.8rem">Last 2 minutes</p>
-        <canvas id="band-history" class="spark-canvas"></canvas>
-        <p class="mini-label" style="margin-top:.8rem">Per channel (relative &theta; / &alpha; / &beta;)</p>
-        <div id="band-table" class="band-table"></div>
+      <section class="ops-card" id="band-card">
+        <h2>Band power <span class="hint">share of the signal, averaged over channels</span></h2>
+        <div class="band-grid">
+          <div id="band-bars" class="band-bars"></div>
+          <div class="band-hist"><p class="mini">Last 2 minutes</p><canvas id="band-history" class="spark-canvas"></canvas></div>
+          <div class="band-tbl"><p class="mini">Per channel (&theta; / &alpha; / &beta;)</p><div id="band-table" class="band-table"></div></div>
+        </div>
       </section>
+    </div>
 
-      <!-- State -->
-      <section class="network-card live-card" id="state-card">
-        <h2 class="panel-title">Cognitive state <span class="panel-subtitle">&mdash; EEG-only, updated every second</span></h2>
+    <!-- Right: what the model thinks, and what the tutor is doing -->
+    <div class="col col-right">
+      <section class="ops-card" id="state-card">
+        <h2>State <span class="hint">EEG only, updated every second</span></h2>
         <div id="model-banner" class="model-banner" hidden></div>
         <div id="replay-info" class="replay-info" hidden></div>
         <div class="state-main">
@@ -125,41 +145,18 @@
           <div id="state-conf" class="state-conf"></div>
         </div>
         <div id="prob-bars" class="prob-bars"></div>
-        <p class="mini-label" style="margin-top:.8rem">Timeline (last 3 minutes, one block per second)</p>
+        <p class="mini" style="margin-top:.55rem">Last 3 minutes</p>
         <canvas id="state-timeline" class="timeline-canvas"></canvas>
         <div id="state-legend" class="state-legend"></div>
       </section>
 
-      <!-- Tutor -->
-      <section class="network-card live-card">
-        <h2 class="panel-title">Tutor activity <span class="panel-subtitle">&mdash; live from /, if someone is playing</span></h2>
+      <section class="ops-card grow" id="tutor-card">
+        <h2>Tutor activity <span class="hint">live, if someone is playing</span></h2>
         <div id="tutor-now" class="tutor-now">No moves yet.</div>
-        <ul id="tutor-log" class="tutor-log"></ul>
-      </section>
-
-      <!-- Recording -->
-      <section class="network-card live-card" id="record-card">
-        <h2 class="panel-title">Recording</h2>
-        <div class="form-row">
-          <label>Participant
-            <input id="rec-participant" type="text" placeholder="e.g. P01" autocomplete="off">
-          </label>
-          <label>Session label <span class="opt">(optional)</span>
-            <input id="rec-label" type="text" placeholder="e.g. pilot" autocomplete="off">
-          </label>
-        </div>
-        <div class="btn-row">
-          <button id="btn-rec-start" class="btn btn-primary" type="button">Start recording</button>
-          <button id="btn-rec-stop" class="btn btn-secondary" type="button">Stop &amp; save</button>
-        </div>
-        <p class="mini-label" style="margin-top:.9rem">Quick condition markers (manual labelling; the guided protocol on <a href="/collect">/collect</a> does this automatically)</p>
-        <div id="marker-row" class="btn-row"></div>
-        <p id="record-msg" class="live-msg" role="status"></p>
-        <p class="mini-label" style="margin-top:.9rem">Saved recordings</p>
-        <ul id="rec-list" class="tutor-log"></ul>
+        <div class="scroll"><ul id="tutor-log" class="tutor-log"></ul></div>
       </section>
     </div>
-  </div>
+  </main>
   <script src="/static/live.js"></script>
 </body>
 </html>

@@ -29,7 +29,7 @@ def test_parse_blocks_pairs_markers_and_attaches_ratings(recording):
     rec = load_recording(recording)
     blocks = parse_blocks(rec["markers"], float(rec["times"][-1]))
     scored = [b for b in blocks if b.condition in ("Focused", "Confused", "Overloaded", "Late_Focused")]
-    assert len(scored) == 8 and all(b.ratings and "fatigue" in b.ratings for b in scored)
+    assert len(scored) == 8 and all(b.ratings and "mind" in b.ratings for b in scored)
     assert all(b.end > b.start and not b.incomplete for b in blocks)
 
 
@@ -158,3 +158,58 @@ def test_find_recordings_accepts_a_directory_or_a_participant_folder(recording):
     assert find_recordings([recording]) == [recording]
     assert find_recordings([recording.parent]) == [recording]
     assert find_recordings([recording.parent.parent]) == [recording]
+
+
+# ------------------------------------------- the three-question report (current /collect)
+def R(difficulty, mind, sleepiness=2):
+    return dict(difficulty=difficulty, mind=mind, sleepiness=sleepiness)
+
+
+@pytest.mark.parametrize("condition,ratings,expected", [
+    ("Focused", R(2, "sharp"), True),
+    ("Focused", R(3, "pushing"), True),
+    ("Focused", R(4, "sharp"), False),            # "too hard" is not a Focused block
+    ("Focused", R(2, "lost"), False),
+    ("Focused", R(2, "drifting"), False),
+    ("Confused", R(3, "lost"), True),
+    ("Confused", R(2, "overwhelmed"), True),
+    ("Confused", R(4, "pushing"), True),          # "too hard" counts even if they kept up
+    ("Confused", R(2, "sharp"), False),           # "confused" but felt sharp and easy
+    ("Overloaded", R(3, "pushing"), True),
+    ("Overloaded", R(2, "overwhelmed"), True),
+    ("Overloaded", R(2, "sharp"), False),         # overloaded block that felt easy: dropped
+])
+def test_manipulation_checks_three_question_report(condition, ratings, expected):
+    (decision,) = decide_blocks([_block(condition, ratings)], Thresholds())
+    assert decision.used is expected
+
+
+def test_fatigue_check_three_question_report():
+    early = [_block("Focused", R(2, "sharp", 1), block="e1"), _block("Confused", R(3, "lost", 2), block="e2")]  # mean 1.5
+    cases = {
+        "tired": R(2, "drifting", 4), "very": R(2, "sharp", 5), "drifty": R(2, "drifting", 3),
+        "alert": R(2, "sharp", 2), "sleepy_but_sharp": R(2, "sharp", 3),
+    }
+    blocks = [_block("Late_Focused", r, block=k) for k, r in cases.items()]
+    decisions = {d.block: d for d in decide_blocks(early + blocks, Thresholds())}
+    assert decisions["tired"].used and decisions["tired"].state == "Fatigued"
+    assert decisions["very"].used and decisions["drifty"].used
+    assert not decisions["alert"].used and not decisions["sleepy_but_sharp"].used
+
+
+def test_fatigue_needs_a_rise_over_early_blocks_in_three_question_report():
+    already_sleepy = [_block("Focused", R(2, "sharp", 4), block="e1"), _block("Confused", R(3, "lost", 4), block="e2")]
+    late = _block("Late_Focused", R(2, "drifting", 4), block="l1")      # tired, but no more than at the start
+    (d,) = [x for x in decide_blocks(already_sleepy + [late], Thresholds()) if x.block == "l1"]
+    assert not d.used
+
+
+def test_fake_recording_in_both_report_formats_is_understood(tmp_path):
+    from data_gen.fake_recording import build_fake_recording
+    for legacy in (False, True):
+        d = build_fake_recording(f"L{int(legacy)}", tmp_path, block_seconds=20, seed=3, legacy_sliders=legacy)
+        rec = load_recording(d)
+        blocks = parse_blocks(rec["markers"], float(rec["times"][-1]))
+        decisions = decide_blocks(blocks, Thresholds())
+        scored = [x for x in decisions if x.condition in ("Focused", "Confused", "Overloaded", "Late_Focused")]
+        assert sum(x.used for x in scored) >= 6                         # a consistent fake participant passes the checks

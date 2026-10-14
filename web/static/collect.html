@@ -9,74 +9,88 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
-  <link rel="stylesheet" href="/static/live.css">
+  <link rel="stylesheet" href="/static/ops.css">
   <link rel="stylesheet" href="/static/collect.css">
 </head>
-<body>
-  <div class="page">
-    <header class="app-header">
-      <div class="brand">
-        <span class="brand-mark">&#9822;</span>
-        <div>
-          <h1>Guided Data Collection</h1>
-          <p class="tagline">Runs the protocol, drops the labels and markers for you &mdash; no manual annotation.</p>
-        </div>
-      </div>
-      <div class="header-status">
-        <a href="/live" class="nav-link">Live monitor &rarr;</a>
-        <a href="/" class="nav-link">Tutor</a>
-      </div>
-    </header>
+<body class="ops">
+  <!-- One slim bar. Before a session: brand + links. During a session: what is happening, the timer,
+       the signal, and the operator's buttons. -->
+  <header class="ops-bar">
+    <div class="ops-brand"><span class="brand-mark">&#9822;</span><strong>Data collection</strong></div>
 
-    <!-- Setup -->
-    <section id="setup" class="network-card live-card">
-      <h2 class="panel-title">Session setup</h2>
-      <div id="setup-status" class="setup-status"></div>
-      <div class="form-row">
-        <label>Participant id
-          <input id="participant" type="text" placeholder="e.g. P01" autocomplete="off">
-        </label>
-        <label>Chess puzzle skill <span class="opt">(approx. rating)</span>
-          <input id="skill" type="number" min="600" max="2200" step="50" value="1000">
-        </label>
-        <label>Block length (s)
-          <input id="block-seconds" type="number" min="10" max="600" value="240">
-        </label>
-        <label class="check"><input id="quick" type="checkbox"> Quick dry run (short blocks)</label>
+    <div id="run-head" class="run-head" hidden>
+      <div class="run-title">
+        <span id="step-kind" class="step-kind">&mdash;</span>
+        <strong id="step-title">&mdash;</strong>
+        <span id="step-progress" class="step-progress"></span>
       </div>
-      <details class="protocol-details">
-        <summary>What will happen (about 45 minutes)</summary>
-        <ol id="protocol-preview" class="protocol-list"></ol>
-        <p class="mini-label">Condition order is randomised per participant (no condition twice in a row) so a
-          condition is never confounded with its position in the session. Fatigue is measured in the late blocks,
-          after a long stretch of continuous play.</p>
-      </details>
-      <div class="btn-row">
-        <button id="btn-start" class="btn btn-primary" type="button">Start session</button>
-        <a class="btn btn-secondary" href="/live" target="_blank" rel="noopener">Open live monitor (check signal) &rarr;</a>
+      <div class="run-timer">
+        <span id="timer">0:00</span>
+        <div class="bar"><div id="timer-fill" class="bar-fill"></div></div>
       </div>
-      <p id="setup-msg" class="live-msg" role="status"></p>
+      <div id="sig" class="sig" title="Signal quality per channel (green = good)"></div>
+      <div class="run-actions">
+        <button id="btn-note" class="btn btn-secondary sm" type="button" title="Tap when something disturbed the signal: moved, coughed, touched the headset">Disturbance</button>
+        <button id="btn-skip" class="btn btn-secondary sm" type="button" title="Discard this block and move on">End block</button>
+        <button id="btn-abort" class="btn btn-secondary sm" type="button">Stop</button>
+      </div>
+    </div>
+
+    <nav id="nav" class="ops-nav">
+      <a href="/live">Live signal</a>
+      <a href="/">Tutor</a>
+    </nav>
+  </header>
+
+  <main class="ops-main">
+    <!-- Setup: everything on one screen -->
+    <section id="setup" class="setup">
+      <div class="ops-card setup-form">
+        <h2>New session</h2>
+        <div class="field-row">
+          <label class="field">Participant id
+            <input id="participant" type="text" placeholder="e.g. P01" autocomplete="off">
+          </label>
+          <label class="field">Chess level <span class="opt">(rating, roughly)</span>
+            <input id="skill" type="number" min="600" max="2200" step="50" value="1000">
+          </label>
+        </div>
+        <label class="check"><input id="quick" type="checkbox"> <span><strong>Quick test run</strong> &mdash; short blocks (~6 min) to check that everything records</span></label>
+        <details class="adv">
+          <summary>More options</summary>
+          <label class="field">Length of each scored block (seconds)
+            <input id="block-seconds" type="number" min="10" max="600" value="240">
+          </label>
+        </details>
+        <h2 class="sub-h">Is the headset ready?</h2>
+        <ul id="setup-status" class="status-list"></ul>
+        <div class="spacer"></div>
+        <button id="btn-start" class="btn btn-primary big" type="button">Start session</button>
+        <p id="setup-msg" class="msg" role="status"></p>
+      </div>
+
+      <div class="ops-card setup-plan">
+        <h2>What will happen <span id="plan-total" class="hint"></span></h2>
+        <div class="scroll"><ol id="protocol-preview" class="plan-list"></ol></div>
+        <p class="plan-note">After each scored block the participant answers three one-tap questions. Block order is shuffled per participant, so a condition is never tied to its position in the session.</p>
+      </div>
     </section>
 
-    <!-- Running -->
+    <!-- Running: one screen at a time, each fills the area -->
     <section id="runner" class="runner" hidden>
-      <div class="runner-bar network-card">
-        <div class="runner-title">
-          <span id="step-kind" class="step-kind">&mdash;</span>
-          <strong id="step-title">&mdash;</strong>
-          <span id="step-progress" class="mini-label"></span>
-        </div>
-        <div class="runner-timer"><span id="timer">0:00</span><div class="bar"><div id="timer-fill" class="bar-fill"></div></div></div>
-        <div class="runner-actions">
-          <button id="btn-note" class="btn btn-secondary" type="button" title="Mark that something disturbed the signal (moved, coughed, adjusted the headset)">Mark disturbance</button>
-          <button id="btn-skip" class="btn btn-secondary" type="button">End block early</button>
-          <button id="btn-abort" class="btn btn-secondary" type="button">Stop session</button>
+      <div id="intro" class="screen center" hidden>
+        <div class="intro-card">
+          <div id="intro-kind" class="intro-kind"></div>
+          <h2 id="intro-title"></h2>
+          <p id="intro-text"></p>
+          <div class="intro-go">
+            <button id="btn-go" class="btn btn-primary big" type="button">Start now</button>
+            <span id="intro-count" class="intro-count"></span>
+          </div>
         </div>
       </div>
 
-      <div id="instruction" class="network-card instruction"></div>
-
-      <div id="stage" class="stage" hidden>
+      <div id="stage" class="screen" hidden>
         <iframe id="tutor-frame" title="Chess tutor" class="tutor-frame"></iframe>
         <div id="nback" class="nback" hidden>
           <div class="nback-label">Press <kbd>M</kbd> when the digit matches the previous one</div>
@@ -85,26 +99,39 @@
         </div>
       </div>
 
-      <div id="fixation" class="fixation" hidden><span>+</span></div>
+      <div id="fixation" class="screen center fixation" hidden>
+        <div class="fix-mark"><span id="fix-mark">+</span></div>
+        <p id="fix-text" class="fix-text"></p>
+      </div>
 
-      <form id="ratings" class="network-card ratings" hidden onsubmit="return false;">
-        <h2 class="panel-title">How was that block?</h2>
-        <p class="mini-label">1 = not at all &nbsp;&middot;&nbsp; 7 = extremely</p>
-        <div id="rating-fields" class="rating-fields"></div>
-        <div class="btn-row"><button id="btn-ratings" class="btn btn-primary" type="submit">Continue</button></div>
-      </form>
+      <div id="ratings" class="screen center" hidden>
+        <form id="ratings-form" class="ratings-card" onsubmit="return false;">
+          <h2>How was that block?</h2>
+          <div id="rating-fields" class="rating-fields"></div>
+          <div class="ratings-foot">
+            <span id="ratings-hint" class="ratings-hint">Tap one answer in each row.</span>
+            <button id="btn-ratings" class="btn btn-primary big" type="submit" disabled>Continue</button>
+          </div>
+        </form>
+      </div>
 
-      <div id="rest" class="network-card rest" hidden></div>
+      <div id="rest" class="screen center" hidden>
+        <div class="rest-card"><strong>Rest</strong><span>Look away from the screen and relax. The next block starts by itself.</span></div>
+      </div>
     </section>
 
     <!-- Done -->
-    <section id="done" class="network-card live-card" hidden>
-      <h2 class="panel-title">Session complete</h2>
-      <p id="done-msg" class="live-msg ok"></p>
-      <p class="mini-label">Next, turn the recording into a labelled dataset:</p>
-      <pre id="done-cmd" class="cmd"></pre>
+    <section id="done" class="screen center" hidden>
+      <div class="done-card">
+        <h2>Session complete</h2>
+        <p id="done-msg" class="msg ok"></p>
+        <p class="plan-note">Next, turn the recording into a labelled dataset:</p>
+        <pre id="done-cmd" class="cmd"></pre>
+        <div class="intro-go"><button id="btn-copy" class="btn btn-secondary" type="button">Copy command</button>
+          <a class="btn btn-secondary" href="/collect">New session</a></div>
+      </div>
     </section>
-  </div>
+  </main>
   <script src="/static/protocol.js"></script>
   <script src="/static/collect.js"></script>
 </body>

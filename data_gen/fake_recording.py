@@ -37,6 +37,24 @@ RATING_MEANS = {
     "Late_Focused": dict(mental_demand=4, effort=4.5, frustration=3, confusion=3, fatigue=6, concentration=3.5),
 }
 
+# The same, for the three-question report /collect asks now:
+# (probability of each "how did your mind feel?" answer, plausible difficulty 1-4, plausible sleepiness 1-5).
+REPORT_PROFILES = {
+    "Focused":      ({"sharp": 0.7, "pushing": 0.3}, (2, 3), (1, 2)),
+    "Confused":     ({"lost": 0.7, "overwhelmed": 0.2, "pushing": 0.1}, (3, 4), (1, 3)),
+    "Overloaded":   ({"overwhelmed": 0.6, "pushing": 0.3, "lost": 0.1}, (3, 4), (2, 3)),
+    "Late_Focused": ({"drifting": 0.8, "sharp": 0.2}, (2, 3), (4, 5)),
+}
+
+
+def make_report(condition: str, np_rng) -> dict:
+    minds, difficulties, sleepiness = REPORT_PROFILES[condition]
+    return {
+        "difficulty": int(np_rng.choice(difficulties)),
+        "mind": str(np_rng.choice(list(minds), p=list(minds.values()))),
+        "sleepiness": int(np_rng.choice(sleepiness)),
+    }
+
 
 def _blend_params(state: str, separation: float) -> dict:
     mid = {k: float(np.mean([p[k] for p in STATE_BAND_PARAMS.values()])) for k in ("theta", "alpha")}
@@ -47,6 +65,7 @@ def build_fake_recording(
     participant: str = "SIM01", root: Path = DEFAULT_ROOT, block_seconds: float = 60.0, seed: int = 0,
     separation: float = 1.0, inconsistent_condition_index: int | None = None, start_time: float = 1_800_000_000.0,
     shuffle_conditions: bool = True, channels: int = 8, native_rate: float = NATIVE_RATE,
+    legacy_sliders: bool = False,
 ) -> Path:
     rng = random.Random(seed)
     order = ["Focused", "Focused", "Confused", "Confused", "Overloaded", "Overloaded"]
@@ -103,10 +122,14 @@ def build_fake_recording(
             clock = end
             recorder.add_marker("block_end", _t=clock, block=block_id, condition=condition, aborted=False)
             if kind == "task" and condition not in ("Practice", "Practice_Dual"):
-                means = dict(RATING_MEANS[condition])
+                reported = condition
                 if inconsistent_condition_index is not None and task_index == inconsistent_condition_index:
-                    means = dict(RATING_MEANS["Focused"]) if condition != "Focused" else dict(RATING_MEANS["Overloaded"])
-                ratings = {k: int(np.clip(round(v + np_rng.normal(0, 0.6)), 1, 7)) for k, v in means.items()}
+                    reported = "Focused" if condition != "Focused" else "Overloaded"   # the participant reports the opposite
+                if legacy_sliders:
+                    means = dict(RATING_MEANS[reported])
+                    ratings = {k: int(np.clip(round(v + np_rng.normal(0, 0.6)), 1, 7)) for k, v in means.items()}
+                else:
+                    ratings = make_report(reported, np_rng)
                 recorder.add_marker("rating", _t=clock + 5, block=block_id, condition=condition, ratings=ratings)
                 clock += 10
                 task_index += 1

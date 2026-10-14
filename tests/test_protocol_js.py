@@ -64,3 +64,18 @@ def test_quick_mode_is_short_and_block_length_is_configurable():
     assert all(s["seconds"] <= 20 for s in quick)
     long_blocks = [s["seconds"] for s in _build(participant="P", blockSeconds=300) if s.get("rated")]
     assert set(long_blocks) == {300}
+
+
+def test_rating_questions_match_what_the_dataset_builder_understands():
+    """The options the participant can tap are exactly the values the manipulation checks read."""
+    from data_gen.from_recordings import Thresholds
+    script = f"const p = require({json.dumps(str(PROTOCOL_JS))}); console.log(JSON.stringify(p.RATING_QUESTIONS));"
+    questions = {q["key"]: q for q in json.loads(subprocess.run(
+        ["node", "-e", script], capture_output=True, text=True, check=True, timeout=30).stdout)}
+    assert set(questions) == {"difficulty", "mind", "sleepiness"}
+    th = Thresholds()
+    known_minds = set(th.focused_minds) | set(th.confused_minds) | set(th.overloaded_minds) | {"drifting"}
+    assert {o["value"] for o in questions["mind"]["options"]} == known_minds
+    assert [o["value"] for o in questions["difficulty"]["options"]] == [1, 2, 3, 4]
+    assert [o["value"] for o in questions["sleepiness"]["options"]] == [1, 2, 3, 4, 5]
+    assert th.confused_difficulty <= 4 and th.fatigue_sleepiness <= 5

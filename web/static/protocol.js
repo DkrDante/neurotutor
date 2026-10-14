@@ -71,6 +71,36 @@
     Late_Focused: "Keep going at a steady pace.",
   };
 
+  // The after-block self-report: three plain questions answered with one tap each (no sliders).
+  // data_gen/from_recordings.py reads exactly these keys and values for its manipulation checks;
+  // tests/test_protocol_js.py keeps the two in step.
+  const RATING_QUESTIONS = [
+    {
+      key: "difficulty", prompt: "How hard were the puzzles?",
+      options: [
+        { value: 1, label: "Easy" }, { value: 2, label: "About right" },
+        { value: 3, label: "Hard" }, { value: 4, label: "Too hard" },
+      ],
+    },
+    {
+      key: "mind", prompt: "How did your mind feel?",
+      options: [
+        { value: "sharp", label: "Sharp and focused", hint: "in the zone" },
+        { value: "pushing", label: "Working hard", hint: "but keeping up" },
+        { value: "lost", label: "Lost", hint: "no idea what to try" },
+        { value: "overwhelmed", label: "Overwhelmed", hint: "too much at once" },
+        { value: "drifting", label: "Tired or drifting", hint: "drowsy, mind wandering" },
+      ],
+    },
+    {
+      key: "sleepiness", prompt: "How awake were you?",
+      options: [
+        { value: 1, label: "Wide awake" }, { value: 2, label: "Fairly awake" }, { value: 3, label: "Getting tired" },
+        { value: 4, label: "Tired" }, { value: 5, label: "Very sleepy" },
+      ],
+    },
+  ];
+
   function buildProtocol(opts) {
     const participant = String(opts.participant || "anon");
     const skill = Number(opts.skill) || 1000;
@@ -139,11 +169,11 @@
   function totalSeconds(steps) {
     return steps.reduce((sum, s) => {
       const rated = s.type === "task" && s.rated;
-      return sum + s.seconds + (rated ? 45 + s.restSeconds : 0);
+      return sum + s.seconds + (rated ? 20 + s.restSeconds : 0);
     }, 0);
   }
 
-  const api = { buildProtocol, totalSeconds, shuffleNoAdjacent, mulberry32, hashString, clampBand, PUZZLE_RATING_MIN, PUZZLE_RATING_MAX };
+  const api = { buildProtocol, totalSeconds, RATING_QUESTIONS, shuffleNoAdjacent, mulberry32, hashString, clampBand, PUZZLE_RATING_MIN, PUZZLE_RATING_MAX };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else root.NeuroProtocol = api;
 })(typeof window !== "undefined" ? window : this);

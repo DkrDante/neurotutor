@@ -58,9 +58,25 @@ IGNORED_CONDITIONS = {"Practice", "Practice_Dual", "Rest", "Baseline_EO", "Basel
 
 @dataclass
 class Thresholds:
-    """Manipulation checks on the 1-7 self-reports. Deliberately modest: they
-    only have to reject blocks where the participant says the opposite of what
-    the condition was meant to induce."""
+    """Manipulation checks on the self-reports. Deliberately modest: they only have
+    to reject blocks where the participant says the opposite of what the condition
+    was meant to induce.
+
+    Two report formats exist. The current /collect asks three plain questions
+    (difficulty 1-4, "how did your mind feel?" one of five phrases, sleepiness 1-5);
+    recordings made with the earlier six 1-7 sliders (mental_demand, frustration, ...)
+    are still understood, with the `overloaded_demand ... fatigue_margin` fields below."""
+    # --- current format (difficulty / mind / sleepiness)
+    focused_minds: tuple = ("sharp", "pushing")          # mind feel that fits a Focused block ...
+    focused_max_difficulty: int = 3                      # ... and the puzzles were not "too hard"
+    confused_minds: tuple = ("lost", "overwhelmed")      # Confused: lost or overwhelmed, or ...
+    confused_difficulty: int = 4                         # ... "too hard"
+    overloaded_minds: tuple = ("overwhelmed", "lost", "pushing")   # Overloaded: strained, or ...
+    overloaded_difficulty: int = 3                       # ... at least "hard"
+    fatigue_sleepiness: int = 4                          # "tired" or worse in a late block ...
+    drifting_sleepiness: int = 3                         # ... or "tired/drifting" and at least "getting tired"
+    sleepiness_margin: float = 1.0                       # ... and above their early-block average by this much
+    # --- earlier six-slider format
     overloaded_demand: int = 5        # mental_demand >= this, or ...
     overloaded_frustration: int = 5   # ... frustration >= this
     confused_confusion: int = 4
@@ -145,11 +161,38 @@ def parse_blocks(markers: list[dict], recording_end: float) -> list[Block]:
     return sorted(done, key=lambda b: b.start)
 
 
+def _check_report(condition: str, r: dict, th: Thresholds, early_sleepiness: float | None) -> tuple[bool, str]:
+    """Manipulation check on the three-question report: does what the participant says
+    about the block not contradict the condition it was meant to induce?"""
+    mind = str(r.get("mind", ""))
+    diff = float(r.get("difficulty", 0))
+    sleep = float(r.get("sleepiness", 0))
+    if condition == "Overloaded":
+        ok = mind in th.overloaded_minds or diff >= th.overloaded_difficulty
+        why = f"mind={mind!r}, difficulty={diff:.0f} (need mind in {list(th.overloaded_minds)} or difficulty>={th.overloaded_difficulty})"
+    elif condition == "Confused":
+        ok = mind in th.confused_minds or diff >= th.confused_difficulty
+        why = f"mind={mind!r}, difficulty={diff:.0f} (need mind in {list(th.confused_minds)} or difficulty>={th.confused_difficulty})"
+    elif condition == "Focused":
+        ok = mind in th.focused_minds and diff <= th.focused_max_difficulty
+        why = f"mind={mind!r}, difficulty={diff:.0f} (need mind in {list(th.focused_minds)} and difficulty<={th.focused_max_difficulty})"
+    else:  # Late_Focused -> Fatigued
+        tired = sleep >= th.fatigue_sleepiness or (mind == "drifting" and sleep >= th.drifting_sleepiness)
+        margin_ok = early_sleepiness is None or sleep >= early_sleepiness + th.sleepiness_margin
+        ok = tired and margin_ok
+        why = (f"sleepiness={sleep:.0f}, mind={mind!r} (need sleepiness>={th.fatigue_sleepiness}, or 'drifting' with sleepiness>={th.drifting_sleepiness}"
+               + (f", and >= early average {early_sleepiness:.1f}+{th.sleepiness_margin:g}" if early_sleepiness is not None else "") + ")")
+    return ok, why
+
+
 def decide_blocks(blocks: list[Block], th: Thresholds) -> list[BlockDecision]:
     """Which blocks become training data, with which label, and why not."""
-    early = [b.ratings["fatigue"] for b in blocks
-             if b.condition in ("Focused", "Confused", "Overloaded") and b.ratings and "fatigue" in b.ratings]
-    early_fatigue = float(np.mean(early)) if early else None
+    def _early(key: str):
+        vals = [b.ratings[key] for b in blocks
+                if b.condition in ("Focused", "Confused", "Overloaded") and b.ratings and key in b.ratings]
+        return float(np.mean(vals)) if vals else None
+    early_fatigue = _early("fatigue")
+    early_sleepiness = _early("sleepiness")
 
     decisions = []
     for b in blocks:
@@ -171,6 +214,11 @@ def decide_blocks(blocks: list[Block], th: Thresholds) -> list[BlockDecision]:
                 d.reason = "no self-report ratings"
                 continue
             d.used, d.reason = True, "accepted without ratings (--no-ratings-filter)"
+            continue
+
+        if "mind" in r:      # the current three-question format
+            d.used, why = _check_report(b.condition, r, th, early_sleepiness)
+            d.reason = ("manipulation check passed: " if d.used else "manipulation check FAILED: ") + why
             continue
 
         def g(key: str) -> float:

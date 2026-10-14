@@ -195,6 +195,7 @@ class EEGConnectRequest(BaseModel):
     stream_name: str | None = None
     channels: list[int] | None = None
     channel_names: list[str] | None = None   # e.g. ["Fz","Pz","P4",...] (matched against the stream's labels)
+    channel_labels: list[str] | None = None  # rename the stream's channels, in stream order (default: auto for the H100 cap)
     unit_scale: float = 1.0                  # multiply raw values by this to get microvolts (1e6 if the stream is in volts)
     noisy_rms_uv: float = 150.0              # per-channel RMS above this reads as "noisy" (dry electrodes may need more)
     notch_hz: float | None = 50.0
@@ -211,7 +212,7 @@ async def eeg_connect(body: EEGConnectRequest):
     elif body.source == "lsl":
         source = LSLEEGSource(
             stream_type=body.stream_type, stream_name=body.stream_name or None,
-            channel_indices=body.channels, channel_names=body.channel_names or None, notch_hz=body.notch_hz,
+            channel_indices=body.channels, channel_names=body.channel_names or None, channel_labels=body.channel_labels or None, notch_hz=body.notch_hz,
             calibration_seconds=body.calibration_seconds, unit_scale=body.unit_scale, noisy_rms_uv=body.noisy_rms_uv,
         )
         try:
@@ -233,6 +234,13 @@ async def eeg_connect(body: EEGConnectRequest):
     else:
         raise HTTPException(status_code=400, detail="source must be 'lsl', 'sim' or 'replay'.")
 
+    info = getattr(source, "stream_info", {}) or {}
+    if info.get("auto_selected") and info.get("name"):
+        others = info.get("other_candidates") or []
+        warnings.append(
+            f"Connected to LSL stream '{info['name']}' automatically."
+            + (f" Other EEG-like streams were also found: {', '.join(others)}; enter a stream name to choose one." if others else "")
+        )
     model_channels = checkpoint_num_channels(DEFAULT_CHECKPOINT)
     if source.num_channels != model_channels:
         warnings.append(

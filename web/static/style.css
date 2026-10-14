@@ -1041,3 +1041,13 @@ body.embed .network-section,
 body.embed #onboarding-banner,
 body.embed #move-explain,
 body.embed .board-hero > .hint-text { display: none !important; }
+
+/* Embedded view must fit the iframe without scrolling: the board shrinks with the iframe's
+   height (everything around it is ~190px), up to its normal size. No solution button either —
+   a participant must not be able to look the answer up mid-block. */
+body.embed {
+  padding: 0.4rem 0.6rem; overflow: hidden;
+  --square-size: clamp(34px, calc((100dvh - 200px) / 8), 76px);
+}
+body.embed #hint-button { display: none !important; }
+body.embed .eval-bar-wrap { display: none !important; }

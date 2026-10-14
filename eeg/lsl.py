@@ -43,7 +43,62 @@ NON_EEG_LABELS = {
     "DATETIME", "PACKET", "BATTERY", "BAT", "CM", "CMS", "DRL", "GND", "GROUND", "REF", "A1", "A2",
     "X1", "X2", "X3", "AUX", "AUX1", "AUX2", "AUX3", "ACC", "ACCX", "ACCY", "ACCZ", "ACC_X", "ACC_Y", "ACC_Z",
     "GYRO", "GYROX", "GYROY", "GYROZ", "RIGHT AUX", "RIGHTAUX",
+    "PPG", "PPG_RED", "PPG_IR", "RED", "IR", "SPO2", "HR", "HRV", "RR", "MAG", "QW", "QX", "QY", "QZ", "Q0", "Q1", "Q2", "Q3",
 }
+
+
+NON_EEG_STREAM_WORDS = (
+    "MARKER", "EVENT", "TRIGGER", "PPG", "IMU", "ACC", "GYRO", "MAG", "QUAT", "MOTION", "HEART", "HRV",
+    "SPO2", "BATTERY", "AUDIO",
+)
+
+
+def rank_eeg_streams(infos) -> list:
+    """Order discovered LSL streams by how likely each is the EEG one, best first.
+
+    Drops irregular-rate streams (markers) and streams whose name or type says they are
+    PPG / IMU / markers. Prefers type EEG, then 'EEG' in the name, then a plausible
+    electrode count and rate; the sort is stable so the answer doesn't flip between runs."""
+    infos = list(infos)
+    # Streams of one device usually share a prefix (neurot_EEG, neurot_PPG, neurot_IMU): a stream
+    # whose prefix is shared by siblings belongs to that device's session, so it wins a tie.
+    prefixes = [str(i.name()).split("_", 1)[0] for i in infos if "_" in str(i.name())]
+    scored = []
+    for info in infos:
+        name, kind = str(info.name()).upper(), str(info.type()).upper()
+        if float(info.nominal_srate()) <= 0 or any(w in name or w in kind for w in NON_EEG_STREAM_WORDS):
+            continue
+        score = (100 if kind == "EEG" else 0) + (50 if "EEG" in name else 0)
+        score += 10 if 2 <= info.channel_count() <= 64 else 0
+        score += 5 if 100 <= float(info.nominal_srate()) <= 2000 else 0
+        if "_" in str(info.name()) and prefixes.count(str(info.name()).split("_", 1)[0]) > 1:
+            score += 20
+        scored.append((-score, str(info.name()), info))
+    return [info for _, _, info in sorted(scored, key=lambda t: (t[0], t[1]))]
+
+
+# The lab's Q.Neuro H100 cap streams its 8 channels as unnamed "Ch1".."Ch8". Its electrode order was
+# read off the vendor software's trace list (14 Oct) and agrees with the signal: Ch3/Ch4 (O1/O2) carry
+# the eyes-closed alpha rise, Ch1-Ch2 (FP1/FP2) and Fz react to blinks.
+H100_LABELS = ["FP1", "FP2", "O1", "O2", "C3", "Cz", "Fz", "C4"]
+H100_NATIVE_RATE = 250.0
+
+
+def _generic_labels(labels) -> bool:
+    return all(str(l).strip().upper() == f"CH{i + 1}" for i, l in enumerate(labels))
+
+
+def resolve_labels(labels, native_rate: float, override=None) -> tuple[list[str], str]:
+    """The channel labels to use and where they came from: 'manual' (explicitly given),
+    'profile:H100' (an unnamed 8-channel 250 Hz stream = the lab's cap) or 'stream'."""
+    labels = list(labels)
+    if override:
+        if len(override) != len(labels):
+            raise LSLStreamNotFound(f"channel_labels has {len(override)} names but the stream has {len(labels)} channels.")
+        return [str(l).strip() for l in override], "manual"
+    if len(labels) == len(H100_LABELS) and abs(native_rate - H100_NATIVE_RATE) < 1 and _generic_labels(labels):
+        return list(H100_LABELS), "profile:H100"
+    return labels, "stream"
 
 
 class LSLStreamNotFound(RuntimeError):
@@ -97,7 +152,7 @@ class LSLEEGSource(EEGSource):
         target_rate: int = SAMPLE_RATE, chunk_seconds: float = 0.25,
         notch_hz: Optional[float] = 50.0, target_std: float = 0.5,
         calibration_seconds: float = 30.0, artifact_sd: float = ARTIFACT_SD,
-        noisy_rms_uv: float = NOISY_RMS_UV, unit_scale: float = 1.0,
+        noisy_rms_uv: float = NOISY_RMS_UV, unit_scale: float = 1.0, channel_labels: Optional[list[str]] = None,
     ):
         self.stream_type = stream_type
         self.stream_name = stream_name
@@ -113,6 +168,8 @@ class LSLEEGSource(EEGSource):
         self.artifact_threshold = artifact_sd * target_std
         self.noisy_rms_uv = noisy_rms_uv
         self.unit_scale = unit_scale          # multiply raw values by this to get microvolts
+        self.channel_labels_override = channel_labels
+        self.labels_source = "stream"
 
         self.num_channels = 0
         self.channel_names: list[str] = []    # labels of the channels actually used
@@ -154,12 +211,18 @@ class LSLEEGSource(EEGSource):
         except ImportError as exc:  # pragma: no cover - depends on the environment
             raise LSLStreamNotFound("pylsl is not installed (pip install pylsl).") from exc
 
+        alternatives: list[str] = []
         if self.stream_name:
             found = pylsl.resolve_byprop("name", self.stream_name, timeout=self.resolve_timeout)
         else:
-            found = pylsl.resolve_byprop("type", self.stream_type, timeout=self.resolve_timeout)
+            # No name given: ask for the standard type first, then look at every stream on
+            # the network (vendors like to label EEG streams "StreamData" or similar).
+            found = pylsl.resolve_byprop("type", self.stream_type, timeout=min(self.resolve_timeout, 2.0))
+            if not found:
+                ranked = rank_eeg_streams(pylsl.resolve_streams(self.resolve_timeout))
+                found, alternatives = ranked[:1], [s.name() for s in ranked[1:]]
         if not found:
-            wanted = f"name={self.stream_name!r}" if self.stream_name else f"type={self.stream_type!r}"
+            wanted = f"name={self.stream_name!r}" if self.stream_name else "an EEG-like stream"
             raise LSLStreamNotFound(
                 f"No LSL stream with {wanted} found within {self.resolve_timeout:.0f}s. "
                 "Is the headset streaming (DSI-Streamer / OpenBCI GUI LSL widget / muselsl)?"
@@ -175,6 +238,7 @@ class LSLEEGSource(EEGSource):
         inlet = pylsl.StreamInlet(info, max_buflen=60, processing_flags=pylsl.proc_ALL)
         try:
             labels, types = self._read_channel_meta(inlet.info(timeout=5.0), total_channels)
+            labels, self.labels_source = resolve_labels(labels, native_rate, self.channel_labels_override)
             self._setup(total_channels, native_rate, labels, types)
         except Exception:
             inlet.close_stream()
@@ -185,6 +249,7 @@ class LSLEEGSource(EEGSource):
             "total_channels": total_channels, "used_channels": self._indices,
             "channel_names": self.channel_names, "all_channel_labels": labels, "channel_types": types,
             "native_rate": self.native_rate, "model_rate": self.sample_rate,
+            "labels_source": self.labels_source, "auto_selected": not self.stream_name, "other_candidates": alternatives,
         }
         return self.stream_info
 

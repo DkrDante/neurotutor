@@ -341,6 +341,7 @@ function updateSourceForm() {
   for (const id of ["lbl-stream-name", "lbl-channel-names", "lbl-channels", "lbl-notch", "lbl-calib"]) $(id).hidden = kind !== "lsl";
   $("lbl-simstate").hidden = kind !== "sim";
   $("lbl-recording").hidden = kind !== "replay";
+  $("adv-lsl").hidden = kind !== "lsl";
   $("lbl-speed").hidden = kind !== "replay";
 }
 $("src-kind").addEventListener("change", updateSourceForm);

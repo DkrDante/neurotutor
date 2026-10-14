@@ -119,3 +119,44 @@ def test_end_to_end_over_a_real_lsl_outlet():
     finally:
         stop.set()
         thread.join(timeout=2)
+
+
+class _Info:
+    def __init__(self, name, kind="StreamData", channels=8, rate=250.0):
+        self._n, self._t, self._c, self._r = name, kind, channels, rate
+
+    def name(self): return self._n
+    def type(self): return self._t
+    def channel_count(self): return self._c
+    def nominal_srate(self): return self._r
+
+
+def test_rank_streams_picks_eeg_and_skips_ppg_imu_markers():
+    from eeg.lsl import rank_eeg_streams
+    infos = [
+        _Info("neurot_PPG", channels=2, rate=100.0), _Info("neurot_IMU", channels=7, rate=100.0),
+        _Info("neurot_Marker", channels=1, rate=0.0), _Info("neurot_EEG"), _Info("EEG"),
+    ]
+    ranked = [i.name() for i in rank_eeg_streams(infos)]
+    assert ranked == ["neurot_EEG", "EEG"]          # device-prefixed stream first; PPG/IMU/marker dropped
+
+
+def test_rank_streams_prefers_type_eeg_and_handles_none():
+    from eeg.lsl import rank_eeg_streams
+    assert rank_eeg_streams([]) == []
+    assert rank_eeg_streams([_Info("only_markers", rate=0.0)]) == []
+    ranked = rank_eeg_streams([_Info("Signal"), _Info("Amp", kind="EEG")])
+    assert ranked[0].name() == "Amp"
+
+
+def test_resolve_labels_names_the_h100_and_respects_overrides():
+    from eeg.lsl import H100_LABELS, resolve_labels
+    generic = [f"Ch{i}" for i in range(1, 9)]
+    assert resolve_labels(generic, 250.0) == (H100_LABELS, "profile:H100")
+    assert resolve_labels(generic, 300.0) == (generic, "stream")                      # other rate: not this cap
+    assert resolve_labels(generic[:7], 250.0) == (generic[:7], "stream")              # other channel count
+    real = ["Fz", "Cz", "Pz", "P3", "P4", "O1", "O2", "C3"]
+    assert resolve_labels(real, 250.0) == (real, "stream")                            # real labels are never replaced
+    assert resolve_labels(generic, 250.0, override=list("ABCDEFGH")) == (list("ABCDEFGH"), "manual")
+    with pytest.raises(LSLStreamNotFound):
+        resolve_labels(generic, 250.0, override=["A", "B"])
