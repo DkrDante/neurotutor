@@ -1,5 +1,6 @@
 from __future__ import annotations
 import csv
+import random
 from pathlib import Path
 import chess
 from chess_task.base import TaskEngine, Puzzle, BehaviorEvent
@@ -24,6 +25,7 @@ class PuzzleTaskEngine(TaskEngine):
         # PuzzleTaskEngine per connection means the no-repeat tracking below
         # only ever worked within a single connection, not across one.
         self._served: set[str] = set(already_served) if already_served else set()
+        self._rng = random.Random()
 
     @property
     def served_puzzle_ids(self) -> set[str]:
@@ -50,7 +52,8 @@ class PuzzleTaskEngine(TaskEngine):
 
     def get_puzzle(self, difficulty: float, rating_min: float | None = None, rating_max: float | None = None) -> Puzzle:
         candidates = self.puzzles
-        if rating_min is not None or rating_max is not None:
+        banded = rating_min is not None or rating_max is not None
+        if banded:
             lo = rating_min if rating_min is not None else 0
             hi = rating_max if rating_max is not None else float("inf")
             # Falls back to the full set if the band is thinner than expected
@@ -60,7 +63,13 @@ class PuzzleTaskEngine(TaskEngine):
         if not available:
             self._served.clear()
             available = candidates
-        best = min(available, key=lambda p: abs(p.rating - difficulty))
+        if banded:
+            # A requested band (targeted practice, the /collect protocol) is sampled across its whole
+            # width: always taking the puzzle nearest the middle would repeat the same narrow slice in
+            # the same order for everyone, and a hard band would not feel any different from an easy one.
+            best = self._rng.choice(available)
+        else:
+            best = min(available, key=lambda p: abs(p.rating - difficulty))
         self._served.add(best.puzzle_id)
         return best
 

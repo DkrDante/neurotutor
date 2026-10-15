@@ -15,6 +15,20 @@ def test_load_puzzles_from_csv():
     # Lichess puzzle database (single-move puzzles only, see chess_task/puzzle_data/).
     assert len(engine.puzzles) > 300
 
+def test_bank_covers_every_protocol_band_with_enough_distinct_puzzles():
+    # /collect draws ~50 puzzles per scored block from a ~250-point band; the bank must be deep enough
+    # that a full session never has to repeat a puzzle within or across blocks.
+    engine = PuzzleTaskEngine(evaluator=FakeEvaluator())
+    for lo in range(700, 2300, 300):
+        assert sum(lo <= p.rating <= lo + 250 for p in engine.puzzles) >= 150
+
+def test_banded_selection_spreads_across_the_whole_band():
+    engine = PuzzleTaskEngine(evaluator=FakeEvaluator())
+    ratings = [engine.get_puzzle(1000, rating_min=1300, rating_max=1600).rating for _ in range(60)]
+    assert min(ratings) < 1380 and max(ratings) > 1520
+    ids = [engine.get_puzzle(1000, rating_min=1300, rating_max=1600).puzzle_id for _ in range(60)]
+    assert len(set(ids)) == 60
+
 def test_get_puzzle_picks_nearest_rating():
     engine = PuzzleTaskEngine(evaluator=FakeEvaluator())
     expected = min(engine.puzzles, key=lambda p: abs(p.rating - 1000))

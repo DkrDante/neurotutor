@@ -48,7 +48,7 @@ def test_difficulty_bands_scale_with_skill_and_stay_inside_the_puzzle_set():
         for s in _build(participant="P", skill=skill):
             if "band" in s:
                 lo, hi = s["band"]
-                assert 604 <= lo < hi <= 2472 and hi - lo >= 150
+                assert 604 <= lo < hi <= 2499 and hi - lo >= 150
     by_cond = {s["condition"]: s["band"] for s in _build(participant="P", skill=1000) if "band" in s}
     assert by_cond["Focused"][1] < by_cond["Confused"][1] <= by_cond["Overloaded"][1]   # harder = higher band
     assert by_cond["Overloaded"][0] > by_cond["Focused"][0]

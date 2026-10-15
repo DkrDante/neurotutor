@@ -15,7 +15,7 @@
   "use strict";
 
   const PUZZLE_RATING_MIN = 604;   // chess_task/puzzle_data/sample_puzzles.csv
-  const PUZZLE_RATING_MAX = 2472;
+  const PUZZLE_RATING_MAX = 2499;
 
   function hashString(text) {
     let h = 2166136261;
